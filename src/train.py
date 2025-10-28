@@ -53,6 +53,61 @@ def compute_loss(model_output: torch.Tensor, targets: torch.Tensor, pad_idx: int
     return criterion(output, targets)
 
 
+def ensure_raw_dataset(raw_dir: str, dataset_version: str = '3.0.0') -> None:
+    """保证原始 CNN/DailyMail 文本存在，缺失时尝试自动下载。"""
+    raw_dir_path = Path(raw_dir)
+    raw_dir_path.mkdir(parents=True, exist_ok=True)
+
+    expected_splits = ['train', 'validation', 'test']
+    missing_splits = []
+
+    for split in expected_splits:
+        split_path = raw_dir_path / split
+        if not split_path.exists() or not any(split_path.glob('*.txt')):
+            missing_splits.append(split)
+
+    if not missing_splits:
+        return
+
+    print(
+        "检测到原始数据缺失: "
+        f"{missing_splits}，开始从 Hugging Face 下载 CNN/DailyMail ({dataset_version})..."
+    )
+
+    try:
+        from datasets import load_dataset  # type: ignore
+    except ImportError as exc:  # pragma: no cover - 仅在缺依赖时触发
+        raise RuntimeError(
+            "缺少 CNN/DailyMail 原始数据，且未安装 `datasets` 库，无法自动下载。\n"
+            "请执行 `pip install datasets` 或手动将数据放置在 data/raw 目录下。"
+        ) from exc
+
+    dataset = load_dataset('cnn_dailymail', dataset_version)
+
+    for split in missing_splits:
+        hf_split = 'validation' if split == 'validation' else split
+        subset = dataset[hf_split]
+        split_path = raw_dir_path / split
+        split_path.mkdir(parents=True, exist_ok=True)
+        print(f"导出 {split} 划分，共 {len(subset)} 个样本...")
+
+        for idx, example in enumerate(tqdm(subset, desc=f"Writing {split}", unit='sample')):
+            filename = f"{split}_{idx:06d}.txt"
+            filepath = split_path / filename
+            article = example['article'].strip()
+            summary = example['highlights'].strip()
+
+            with filepath.open('w', encoding='utf-8') as f:
+                f.write("=== ARTICLE ===\n")
+                f.write(article)
+                f.write("\n\n=== SUMMARY ===\n")
+                f.write(summary)
+
+        print(f"✓ {split} 划分导出完成: {split_path}")
+
+    print("✓ 已完成 CNN/DailyMail 数据集下载与导出")
+
+
 def train_epoch(
     model: Seq2Seq,
     dataloader,
@@ -177,6 +232,16 @@ def main(args):
     num_epochs = args.epochs or config.get('num_epochs', 10)
     lr = args.lr or config.get('learning_rate', 1e-4)
     teacher_forcing_ratio = config.get('teacher_forcing_ratio', 0.5)
+
+    dataset_version = args.dataset_version or config.get('dataset_version', '3.0.0')
+    auto_download = config.get('auto_download', True)
+    if getattr(args, 'auto_download', False):
+        auto_download = True
+    if getattr(args, 'no_auto_download', False):
+        auto_download = False
+
+    if auto_download:
+        ensure_raw_dataset(raw_data_dir, dataset_version)
     
     # 创建保存目录
     os.makedirs(save_dir, exist_ok=True)
@@ -355,6 +420,9 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', type=int, help='训练轮数')
     parser.add_argument('--lr', type=float, help='学习率')
     parser.add_argument('--num_workers', type=int, default=0, help='数据加载线程数')
+    parser.add_argument('--dataset_version', type=str, help='自动下载 CNN/DailyMail 数据集的版本')
+    parser.add_argument('--auto_download', action='store_true', help='缺失原始数据时自动下载数据集')
+    parser.add_argument('--no_auto_download', action='store_true', help='禁用自动下载数据集')
     
     args = parser.parse_args()
     main(args)

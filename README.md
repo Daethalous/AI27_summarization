@@ -49,7 +49,7 @@ pip install -r requirements.txt
 
 ### 2. 数据准备
 
-本项目默认从 `data/raw` 目录读取 CNN/DailyMail 原始文本（`.txt`，包含 `=== ARTICLE ===` 与 `=== SUMMARY ===` 两段）。首次运行 `train.py` 或单独调用预处理逻辑时会：
+本项目默认从 `data/raw` 目录读取 CNN/DailyMail 原始文本（`.txt`，包含 `=== ARTICLE ===` 与 `=== SUMMARY ===` 两段）。若目录缺失，`train.py` 会在安装了 `datasets` 库的情况下自动下载 Hugging Face 上的 CNN/DailyMail 数据（`dataset_version` 默认 `3.0.0`，可在配置或命令行调整；将 `auto_download` 设为 `false` 或传入 `--no_auto_download` 可关闭自动下载）。首次运行 `train.py` 或单独调用预处理逻辑时会：
 
 1. 使用 **NLTK** `word_tokenize` 对文本分词，统一转换为小写并截断至 512；
 2. 基于训练集构建词表（最大 50k、最小词频 5）并保存到 `data/processed/vocab.json`；

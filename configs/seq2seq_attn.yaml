@@ -6,6 +6,8 @@ processed_dir: ../data/processed
 vocab_path: ../data/processed/vocab.json
 save_dir: ./checkpoints
 log_path: ./logs/baseline.log
+dataset_version: 3.0.0
+auto_download: true
 
 # 数据预处理
 max_vocab_size: 50000
