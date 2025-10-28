@@ -278,13 +278,6 @@ start_epoch = checkpoint['epoch'] + 1
 
 修改 `src/datamodules/cnndm.py` 中的 `parse_story_file()` 函数以适配您的数据格式。
 
-### 调整注意力机制
-
-在 `src/models/seq2seq_attn.py` 中修改 `LuongAttention` 类，尝试：
-- Dot attention
-- Concat attention
-- Multi-head attention
-
 ### 添加Coverage机制
 
 参考 Pointer-Generator 论文，在 Attention 中添加 coverage vector。
