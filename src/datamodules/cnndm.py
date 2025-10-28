@@ -108,7 +108,7 @@ def prepare_datasets(
     max_vocab_size: int = 50000,
     min_freq: int = 5,
     limit_per_split: Optional[int] = None,
-    progress_step: int = 500
+    progress_step: int = 10000
 ) -> Vocab:
     """处理 raw 数据，生成 pickle 文件与词表。
 
@@ -266,7 +266,7 @@ def build_vocab_from_data(
     processed_dir: Optional[str] = None,
     vocab_path: Optional[str] = None,
     limit_per_split: Optional[int] = None,
-    progress_step: int = 500
+    progress_step: int = 10000
 ) -> Vocab:
     """兼容旧接口，调用 `prepare_datasets` 并返回 Vocab。"""
     if processed_dir is None or vocab_path is None:
