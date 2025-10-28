@@ -1,0 +1,19 @@
+# PyTorch
+torch>=1.9.0
+torchvision>=0.10.0
+torchaudio>=0.9.0
+
+# 数据处理
+pyyaml>=5.4.1
+tqdm>=4.62.0
+
+# 评估指标
+rouge-score>=0.0.4
+nltk>=3.8.1
+
+# 可视化
+tensorboard>=2.6.0
+matplotlib>=3.5.0
+
+# 可选：使用 Hugging Face datasets 加载原始数据
+datasets>=2.0.0
