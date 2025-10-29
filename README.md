@@ -91,13 +91,14 @@ python quick_test_train.py --model pg --num_samples 100 --num_epochs 2
 ```
 ### 3.2.2 训练pointer generator模型(数据集子集 1000个样本)
 
-bash
+```bash
 cd src
 python train_pg.py --data_dir ../data/raw --num_epochs 10 --num_samples 1000
+```
 
 ### 3.2.3 训练pointer generator模型(完整数据集)
 
-bash
+```bash
 cd src
 python train_pg.py --data_dir ../data/raw --num_epochs 10
 ```
