@@ -15,27 +15,30 @@ summarization/
 │       └── test.pkl
 ├── src/
 │   ├── datamodules/
-│   │   └── cnndm.py            # 数据加载、词表构建
+│   │   └── cnndm.py            # 数据加载与预处理
 │   ├── models/
-│   │   ├── baseline/
-│   │   │   ├── encoder.py      # Encoder
-│   │   │   ├── decoder.py      # Decoder + Attention
-│   │   │   └── model.py        # Seq2Seq 封装
-│   │   └── __init__.py
+│   │   ├── baseline/           # Baseline 模型
+│   │   │   ├── __init__.py
+|   |   |   ├──encoder.py
+│   │   │   ├── decoder.py
+│   │   │   └── model.py
+│   │   └── pointer_generator/  # 新增 Pointer-Generator 模型
+│   │       ├── pg_decoder.py
+|   |       ├── pg_model.py
+│   │       └── __init__.py
 │   ├── utils/
-│   │   ├── vocab.py            # 词表类
-│   │   ├── decoding.py         # Greedy/Beam Search
-│   │   └── metrics.py          # ROUGE/OOV 等指标
-│   ├── train.py                # 训练脚本（自动预处理+日志）
+│   │   ├── vocab.py            # 词表工具
+│   │   └── metrics.py          # 评估指标
+│   ├── train.py                # Baseline 训练脚本
+│   ├── train_pg.py             # PG 训练脚本
 │   ├── eval.py                 # 评估脚本
-│   └── infer.py                # 推理脚本
+│   └── quick_test_train.py     # 快速测试脚本
 ├── configs/
-│   └── seq2seq_attn.yaml       # 超参数配置
-├── scripts/
-│   ├── run_train.bat           # Windows 训练脚本
-│   └── run_eval.bat            # Windows 评估脚本
-├── checkpoints/                # 训练时生成的模型
-├── outputs/                    # 评估/推理输出
+│   └── seq2seq_attn.yaml       # 配置文件示例
+├── checkpoints_baseline/       # Baseline 模型保存目录
+├── checkpoints_pg/             # PG 模型保存目录
+├── outputs/                    # 评估结果输出
+├── requirements.txt
 └── README.md
 ```
 
@@ -70,11 +73,33 @@ summarization/data/
     └── test.pkl
 ```
 
-### 3. 训练模型
+### 3.1 训练baseline模型
 
 ```bash
 cd src
 python train.py --config ../configs/seq2seq_attn.yaml
+```
+
+训练默认参数：`batch size=32`、`learning rate=1e-4`、`epoch=10`、`max_src_len=max_tgt_len=512`，每轮指标会自动写入 `logs/baseline.log` 以检查 ROUGE-L 波动是否低于 1%。
+
+### 3.2.1 快速上手： 测试baseline/pointer generator模型(仅使用100个样本)
+
+```bash
+cd src
+python quick_test_train.py --model baseline --num_samples 100 --num_epochs 2
+python quick_test_train.py --model pg --num_samples 100 --num_epochs 2
+```
+### 3.2.2 训练pointer generator模型(数据集子集 1000个样本)
+
+bash
+cd src
+python train_pg.py --data_dir ../data/raw --num_epochs 10 --num_samples 1000
+
+### 3.2.3 训练pointer generator模型(完整数据集)
+
+bash
+cd src
+python train_pg.py --data_dir ../data/raw --num_epochs 10
 ```
 
 训练默认参数：`batch size=32`、`learning rate=1e-4`、`epoch=10`、`max_src_len=max_tgt_len=512`，每轮指标会自动写入 `logs/baseline.log` 以检查 ROUGE-L 波动是否低于 1%。
