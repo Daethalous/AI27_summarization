@@ -1,0 +1,5 @@
+base_config: seq2seq_attn.yaml
+model_type: pointer_generator
+handle_oov: true
+max_oov_size: 1000
+log_file: pointer_generator.log
