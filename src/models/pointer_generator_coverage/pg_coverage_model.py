@@ -25,12 +25,14 @@ class PGCoverageSeq2Seq(nn.Module):
         hidden_size: int = 512,
         num_layers: int = 1,
         dropout: float = 0.1,
-        pad_idx: int = 0
+        pad_idx: int = 0,
+        cov_loss_weight: float = 1.0  # 新增：接收覆盖损失权重
     ) -> None:
         super().__init__()
         self.vocab_size = vocab_size
         self.pad_idx = pad_idx
         self.hidden_size = hidden_size
+        self.cov_loss_weight = cov_loss_weight # 新增，保存为模型属性（可选，便于后续调整）
 
         # 1. 编码器 (BiLSTM, 输出维度为 hidden_size)
         self.encoder = Encoder(
@@ -41,7 +43,8 @@ class PGCoverageSeq2Seq(nn.Module):
         # 2. 解码器 (带 Coverage 的 PG Decoder)
         self.decoder = PGCoverageDecoder(
             vocab_size, embed_size, hidden_size,
-            num_layers, dropout, pad_idx
+            num_layers, dropout, pad_idx,
+            cov_loss_weight=cov_loss_weight  # 传递覆盖损失权重到解码器
         )
 
         # 3. 桥接层: 将 BiLSTM 的 hidden_size//2 * 2 转换为 hidden_size
@@ -79,7 +82,7 @@ class PGCoverageSeq2Seq(nn.Module):
         src_oov_map: Optional[torch.Tensor] = None,
         teacher_forcing_ratio: float = 1.0
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        
+
         # 1. 编码
         encoder_outputs, (hidden, cell) = self.encoder(src, src_lens)
         # encoder_outputs: [batch, src_len, hidden_size]
@@ -89,7 +92,7 @@ class PGCoverageSeq2Seq(nn.Module):
 
         # 3. 解码 (包含 Coverage Loss 计算)
         use_teacher_forcing = torch.rand(1).item() < teacher_forcing_ratio
-        
+
         # outputs: [batch, tgt_len-1, extended_vocab_size]
         # coverage_loss: 标量
         outputs, _, _, coverage_loss = self.decoder(
@@ -103,8 +106,8 @@ class PGCoverageSeq2Seq(nn.Module):
             coverage_vector=None, # 在 Decoder 内部初始化
             teacher_forcing=use_teacher_forcing
         )
-        
-        return outputs, coverage_loss
+
+        return outputs, None, None, coverage_loss
 
     def generate(
         self,
@@ -116,7 +119,7 @@ class PGCoverageSeq2Seq(nn.Module):
         eos_idx: int = 3,
         device: Optional[torch.device] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        
+
         if device is None:
             device = src.device
 
@@ -127,11 +130,11 @@ class PGCoverageSeq2Seq(nn.Module):
 
         predictions = torch.zeros(batch_size, max_length, dtype=torch.long, device=device)
         all_attentions = []
-        
+
         # ⭐ 1. 初始化 Coverage Vector
         src_len = src.size(1)
         current_coverage = torch.zeros(batch_size, src_len, device=device)
-        
+
         decoder_input = torch.full((batch_size, 1), sos_idx, dtype=torch.long, device=device)
         finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
 
@@ -143,24 +146,24 @@ class PGCoverageSeq2Seq(nn.Module):
                 src, src_oov_map,
                 coverage_vector=current_coverage
             )
-            
+
             # ⭐ 3. 更新 Coverage Vector: c_t = c_{t-1} + a_t
             current_coverage = current_coverage + attn_weights
-            
+
             pred_id = dist.argmax(dim=1)
             predictions[:, t] = pred_id
             all_attentions.append(attn_weights)
-            
+
             finished = finished | (pred_id == eos_idx)
             if finished.all():
                 break
-            
+
             decoder_input = torch.clamp(pred_id, 0, self.vocab_size - 1).unsqueeze(1)
 
         attention_weights = torch.stack(all_attentions, dim=1)
 
         return predictions, attention_weights
-    
+
     def beam_search(
         self,
         src: torch.Tensor,
@@ -172,7 +175,7 @@ class PGCoverageSeq2Seq(nn.Module):
         eos_idx: int = 3,
         device: Optional[torch.device] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        
+
         if device is None:
             device = src.device
 
@@ -181,17 +184,17 @@ class PGCoverageSeq2Seq(nn.Module):
 
         encoder_outputs, (hidden, cell) = self.encoder(src, src_lens)
         hidden, cell = self._bridge_states(hidden, cell)
-        
+
         # 初始化 Coverage Vector [1, src_len]
         src_len = src.size(1)
-        initial_coverage = torch.zeros(1, src_len, device=device) 
+        initial_coverage = torch.zeros(1, src_len, device=device)
 
         # 扩展状态到 Beam
         encoder_outputs = encoder_outputs.expand(beam_size, -1, -1)
         hidden = hidden.expand(-1, beam_size, -1).contiguous()
         cell = cell.expand(-1, beam_size, -1).contiguous()
         src_expanded = src.expand(beam_size, -1)
-        
+
         if src_oov_map is not None:
             src_oov_map_expanded = src_oov_map.expand(beam_size, -1)
         else:
@@ -202,22 +205,22 @@ class PGCoverageSeq2Seq(nn.Module):
             src_lens_expanded = None
 
         # ⭐ 扩展 Coverage Vector
-        coverage_vectors: List[torch.Tensor] = [initial_coverage.squeeze(0).clone()] * beam_size 
+        coverage_vectors: List[torch.Tensor] = [initial_coverage.squeeze(0).clone()] * beam_size
 
         sequences = torch.full((beam_size, 1), sos_idx, dtype=torch.long, device=device)
         scores = torch.zeros(beam_size, device=device)
-        scores[1:] = -float('inf') 
+        scores[1:] = -float('inf')
 
         finished = []
-        
+
         # 用于存储 Attention Weights (略，这里只关注序列)
 
         for t in range(max_length):
             decoder_input = sequences[:, -1].unsqueeze(1) # [beam, 1]
-            
+
             # 聚合当前 beam 的所有 coverage vectors
             current_coverage = torch.stack(coverage_vectors, dim=0) # [beam, src_len]
-            
+
             dist, hidden, cell, attn_weights, _ = self.decoder.forward_step(
                 decoder_input, hidden, cell,
                 encoder_outputs, src_lens_expanded,
@@ -225,10 +228,10 @@ class PGCoverageSeq2Seq(nn.Module):
                 coverage_vector=current_coverage
             ) # attn_weights: [beam, src_len]
 
-            log_probs = torch.log(dist + 1e-10) 
-            next_scores = scores.unsqueeze(1) + log_probs 
+            log_probs = torch.log(dist + 1e-10)
+            next_scores = scores.unsqueeze(1) + log_probs
 
-            next_scores_flat = next_scores.view(-1) 
+            next_scores_flat = next_scores.view(-1)
             topk_scores, topk_indices = next_scores_flat.topk(beam_size)
 
             beam_ids = topk_indices // dist.size(1) # 来自哪个 beam
@@ -239,19 +242,19 @@ class PGCoverageSeq2Seq(nn.Module):
             next_cell = []
             next_scores_list = []
             # ⭐ 存储下一时间步的 Coverage
-            next_coverage_vectors: List[torch.Tensor] = [] 
-            
+            next_coverage_vectors: List[torch.Tensor] = []
+
             for i in range(beam_size):
                 beam_id = beam_ids[i]
                 token_id = token_ids[i]
                 score = topk_scores[i]
 
                 seq = torch.cat([sequences[beam_id], token_id.unsqueeze(0)])
-                
+
                 # ⭐ 3. 更新并选择 Coverage
                 # c_t = c_{t-1} + a_t
-                new_coverage = coverage_vectors[beam_id] + attn_weights[beam_id] 
-                
+                new_coverage = coverage_vectors[beam_id] + attn_weights[beam_id]
+
                 if token_id == eos_idx:
                     finished.append((seq, score.item()))
                 else:
