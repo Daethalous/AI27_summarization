@@ -62,14 +62,19 @@ def quick_test_baseline(args):
     vocab_path = processed_dir / 'vocab.json'
     if not vocab_path.exists():
         logger.info("词表不存在，开始预处理数据...")
+        # =======================================================
+        # 🐛 修复 prepare_datasets 调用参数
+        # =======================================================
         prepare_datasets(
             raw_dir=str(data_dir),
-            output_dir=str(processed_dir),
+            processed_dir=str(processed_dir), # 修复：将 output_dir 改为 processed_dir
+            vocab_path=str(vocab_path),      # 修复：添加必需的 vocab_path
             max_vocab_size=args.max_vocab_size,
             min_freq=args.min_freq,
             max_src_len=args.max_src_len,
             max_tgt_len=args.max_tgt_len
         )
+        # =======================================================
     
     # 加载词表
     vocab = Vocab.load(str(vocab_path))
@@ -229,14 +234,19 @@ def quick_test_pointer_generator(args):
     if not vocab_path.exists():
         logger.info("词表不存在，开始预处理数据...")
         from datamodules.cnndm import prepare_datasets
+        # =======================================================
+        # 🐛 修复 prepare_datasets 调用参数
+        # =======================================================
         prepare_datasets(
             raw_dir=str(data_dir),
-            output_dir=str(processed_dir),
+            processed_dir=str(processed_dir), # 修复：将 output_dir 改为 processed_dir
+            vocab_path=str(vocab_path),      # 修复：添加必需的 vocab_path
             max_vocab_size=args.max_vocab_size,
             min_freq=args.min_freq,
             max_src_len=args.max_src_len,
             max_tgt_len=args.max_tgt_len
         )
+        # =======================================================
     
     # 加载词表
     vocab = Vocab.load(str(vocab_path))
@@ -399,14 +409,19 @@ def quick_test_pg_coverage(args):
     if not vocab_path.exists():
         logger.info("词表不存在，开始预处理数据...")
         from datamodules.cnndm import prepare_datasets
+        # =======================================================
+        # 🐛 修复 prepare_datasets 调用参数
+        # =======================================================
         prepare_datasets(
             raw_dir=str(data_dir),
-            output_dir=str(processed_dir),
+            processed_dir=str(processed_dir), # 修复：将 output_dir 改为 processed_dir
+            vocab_path=str(vocab_path),      # 修复：添加必需的 vocab_path
             max_vocab_size=args.max_vocab_size,
             min_freq=args.min_freq,
             max_src_len=args.max_src_len,
             max_tgt_len=args.max_tgt_len
         )
+        # =======================================================
     
     # 加载词表
     vocab = Vocab.load(str(vocab_path))
