@@ -12,7 +12,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from models.pointer_generator_coverage.pgct_model import PGCTModel
+from models.pgct.pgct_model import PGCTModel
 from datamodules.cnndm import prepare_datasets
 from utils.decoding import greedy_decode, beam_search_decode
 from utils.vocab import Vocab

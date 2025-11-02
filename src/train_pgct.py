@@ -1,11 +1,13 @@
 """
 Transformer+Pointer-Generator+Coverage (PGCT) 模型正式训练脚本
+支持定期保存 checkpoint
 """
 from __future__ import annotations
 import sys
 from pathlib import Path
 import logging
 from typing import Optional, List
+import argparse
 
 import torch
 from torch.utils.data import DataLoader, Subset
@@ -16,7 +18,7 @@ import torch.optim as optim
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from datamodules.cnndm import prepare_datasets, get_dataloader
-from models.pointer_generator_coverage.pgct_model import PGCTModel
+from models.pgct.pgct_model import PGCTModel
 from utils.vocab import Vocab
 
 try:
@@ -43,70 +45,71 @@ def calculate_nll_loss(predictions: torch.Tensor, targets: torch.Tensor, pad_idx
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data_dir", type=str, default="../data/raw")
+    parser.add_argument("--save_dir", type=str, default="../checkpoints_pgct")
+    parser.add_argument("--num_epochs", type=int, default=10)
+    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--embed_size", type=int, default=256)
+    parser.add_argument("--hidden_size", type=int, default=256)
+    parser.add_argument("--num_encoder_layers", type=int, default=3)
+    parser.add_argument("--num_decoder_layers", type=int, default=3)
+    parser.add_argument("--nhead", type=int, default=8)
+    parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--cov_loss_weight", type=float, default=1.0)
+    parser.add_argument("--max_src_len", type=int, default=400)
+    parser.add_argument("--max_tgt_len", type=int, default=100)
+    parser.add_argument("--teacher_forcing_ratio", type=float, default=0.5)
+    parser.add_argument("--learning_rate", type=float, default=1e-4)
+    parser.add_argument("--grad_clip", type=float, default=5.0)
+    parser.add_argument("--save_every", type=int, default=2, help="隔多少个 epoch 保存一次 checkpoint")
+    args = parser.parse_args()
+
     logger = setup_logger()
-
-    # 配置参数
-    data_dir = "../data/raw"
-    save_dir = "../checkpoints_pgct"
-    num_epochs = 10
-    batch_size = 8
-    embed_size = 256
-    hidden_size = 256
-    num_encoder_layers = 3
-    num_decoder_layers = 3
-    nhead = 8
-    dropout = 0.1
-    cov_loss_weight = 1.0
-    max_src_len = 400
-    max_tgt_len = 100
-    teacher_forcing_ratio = 0.5
-    learning_rate = 1e-4
-    grad_clip = 5.0
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"使用设备: {device}")
 
     # 数据预处理
-    data_dir = Path(data_dir)
+    data_dir = Path(args.data_dir)
     processed_dir = data_dir.parent / "processed"
     vocab_path = processed_dir / "vocab.json"
     if not vocab_path.exists():
         prepare_datasets(str(data_dir), str(processed_dir), str(vocab_path),
                          max_vocab_size=50000, min_freq=5,
-                         max_src_len=max_src_len, max_tgt_len=max_tgt_len)
+                         max_src_len=args.max_src_len, max_tgt_len=args.max_tgt_len)
 
     vocab = Vocab.load(str(vocab_path))
     pad_idx = vocab.pad_idx
     sos_idx = vocab.sos_idx
     eos_idx = vocab.eos_idx
 
-    train_loader = get_dataloader(str(processed_dir), batch_size=batch_size, split="train", shuffle=True, include_oov=True)
-    val_loader = get_dataloader(str(processed_dir), batch_size=batch_size, split="val", shuffle=False, include_oov=True)
+    train_loader = get_dataloader(str(processed_dir), batch_size=args.batch_size, split="train", shuffle=True, include_oov=True)
+    val_loader = get_dataloader(str(processed_dir), batch_size=args.batch_size, split="val", shuffle=False, include_oov=True)
 
     # 模型
     model = PGCTModel(
         vocab_size=len(vocab),
-        embed_size=embed_size,
-        hidden_size=hidden_size,
-        num_encoder_layers=num_encoder_layers,
-        num_decoder_layers=num_decoder_layers,
-        nhead=nhead,
-        dropout=dropout,
+        embed_size=args.embed_size,
+        hidden_size=args.hidden_size,
+        num_encoder_layers=args.num_encoder_layers,
+        num_decoder_layers=args.num_decoder_layers,
+        nhead=args.nhead,
+        dropout=args.dropout,
         pad_idx=pad_idx,
-        cov_loss_weight=cov_loss_weight,
-        max_src_len=max_src_len,
-        max_tgt_len=max_tgt_len
+        cov_loss_weight=args.cov_loss_weight,
+        max_src_len=args.max_src_len,
+        max_tgt_len=args.max_tgt_len
     ).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    tb_writer = SummaryWriter(log_dir=Path(save_dir)/"runs")
+    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+    tb_writer = SummaryWriter(log_dir=Path(args.save_dir)/"runs")
 
     best_val_loss = float("inf")
 
-    for epoch in range(1, num_epochs+1):
+    for epoch in range(1, args.num_epochs+1):
         model.train()
         running_nll = 0.0
         running_cov = 0.0
-        pbar = tqdm(train_loader, desc=f"Train Epoch {epoch}/{num_epochs}")
+        pbar = tqdm(train_loader, desc=f"Train Epoch {epoch}/{args.num_epochs}")
         for batch in pbar:
             src = batch['src'].to(device)
             tgt = batch['tgt'].to(device)
@@ -115,11 +118,11 @@ def main():
                 src_oov_map = src_oov_map.to(device)
 
             optimizer.zero_grad()
-            outputs, _, _, coverage_loss = model(src, tgt, src_oov_map=src_oov_map, teacher_forcing_ratio=teacher_forcing_ratio)
+            outputs, _, _, coverage_loss = model(src, tgt, src_oov_map=src_oov_map, teacher_forcing_ratio=args.teacher_forcing_ratio)
             nll_loss = calculate_nll_loss(outputs, tgt[:, 1:], pad_idx)
             total_loss = nll_loss + coverage_loss
             total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args.grad_clip)
             optimizer.step()
 
             running_nll += nll_loss.item()
@@ -154,8 +157,19 @@ def main():
         # 保存最佳模型
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
-            torch.save(model.state_dict(), Path(save_dir)/"best.pt")
-            logger.info(f"✨ 新最佳模型保存: {save_dir}/best.pt")
+            torch.save(model.state_dict(), Path(args.save_dir)/"best.pt")
+            logger.info(f"✨ 新最佳模型保存: {args.save_dir}/best.pt")
+
+        # 定期保存 checkpoint
+        if epoch % args.save_every == 0:
+            ckpt_path = Path(args.save_dir)/f"checkpoint_epoch_{epoch}.pt"
+            torch.save({
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "avg_val_loss": avg_val_loss
+            }, ckpt_path)
+            logger.info(f"💾 定期保存模型 checkpoint: {ckpt_path}")
 
     tb_writer.close()
     logger.info("✅ 正式训练完成！")

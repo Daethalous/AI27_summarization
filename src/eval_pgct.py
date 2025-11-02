@@ -17,7 +17,7 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent))
 
 from datamodules.cnndm import get_dataloader, prepare_datasets
-from models.pointer_generator_coverage.pgct_model import PGCTModel
+from models.pgct.pgct_model import PGCTModel
 from utils.decoding import greedy_decode, beam_search_decode
 from utils.metrics import batch_compute_metrics, print_metrics
 from utils.vocab import Vocab

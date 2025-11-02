@@ -19,7 +19,7 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from datamodules.cnndm import prepare_datasets, get_dataloader
-from models.pointer_generator_coverage.pgct_model import PGCTModel
+from models.pgct.pgct_model import PGCTModel
 from utils.vocab import Vocab
 
 
