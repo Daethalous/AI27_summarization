@@ -2,7 +2,7 @@
 """通用 Pointer-Generator 机制实现（与编码器/解码器架构无关）"""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Tuple # 导入 Tuple 以修正返回类型
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -15,8 +15,8 @@ class PointerGenerator(nn.Module):
         # 生成概率 p_gen 计算层（输入：解码器输出 + 上下文向量 + 嵌入向量）
         self.mid_linear = nn.Linear(hidden_size * 2, hidden_size)
         self.p_gen_linear = nn.Linear(hidden_size * 2 + embed_size, 1)
-        # 词典分布输出层（输入：解码器输出 + 上下文向量）
-        self.vocab_linear = nn.Linear(hidden_size * 2, vocab_size)
+        # 修正: vocab_linear 的输入应该是 mid_output 的大小，即 hidden_size
+        self.vocab_linear = nn.Linear(hidden_size, vocab_size)
 
     def compute_final_dist(
         self,
@@ -27,8 +27,7 @@ class PointerGenerator(nn.Module):
         attn_weights: torch.Tensor,     # 注意力权重（用于复制分布）[batch, src_len]
         src_ids: Optional[torch.Tensor] = None,  # 源文本词表索引 [batch, src_len]
         src_oov_map: Optional[torch.Tensor] = None  # OOV映射表 [batch, src_len]
-        
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: # 修正返回类型
         """
         计算最终混合分布：p_gen * 词典分布 + (1-p_gen) * 复制分布
         完全复用原逻辑，仅通过参数适配不同解码器架构
@@ -41,9 +40,9 @@ class PointerGenerator(nn.Module):
 
         # 2. 计算词典生成分布 P_vocab()
         vocab_input = torch.cat([decoder_output, context], dim=1)  # [batch, 2*hidden]
-        mid_output = torch.tanh(self.mid_linear(vocab_input)) # tanh(V [st, h*t] + b)
-        vocab_logits = self.vocab_linear(mid_output)  # [batch, vocab_size]
-        # vocab_logits = torch.clamp(vocab_logits, -50, 50) #防止溢出
+        mid_output = torch.tanh(self.mid_linear(vocab_input)) # tanh(V [st, h*t] + b) -> [batch, hidden_size]
+        vocab_logits = self.vocab_linear(mid_output)  # [batch, hidden_size] -> [batch, vocab_size]
+        vocab_logits = torch.clamp(vocab_logits, -50, 50) #防止溢出
         vocab_dist = F.softmax(vocab_logits, dim=1)  # [batch, vocab_size]
 
         # 3. 处理OOV：构建扩展词表分布（包含源文本中出现的OOV词）

@@ -18,7 +18,6 @@ import torch.optim as optim
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from datamodules.cnndm import prepare_datasets, get_dataloader
-from models.pgct.pgct_model import PGCTModel
 from utils.vocab import Vocab
 
 try:

@@ -88,3 +88,50 @@ def pgct_beam_search_decode(
 
     attn_tensor = torch.stack(best.attn_weights_list, dim=0) if best.attn_weights_list else torch.zeros(1, src_len)
     return torch.tensor([best.sequence], device=device), attn_tensor.unsqueeze(0)
+
+@torch.no_grad()
+def pgct_greedy_decode(
+    model: nn.Module,
+    src: torch.Tensor,
+    src_lens: Optional[torch.Tensor] = None,
+    src_oov_map: Optional[torch.Tensor] = None,
+    max_length: int = 100,
+    sos_idx: int = 2,
+    eos_idx: int = 3,
+    device: Optional[torch.device] = None
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Transformer贪心解码（PGCT专用, 支持 Pointer-Generator + Coverage）"""
+    model.eval()
+    device = device or src.device
+    encoder_outputs, _ = model.encoder(src, src_lens)
+    src_mask = (src == model.pad_idx)
+    src_len = encoder_outputs.size(1)
+
+    seq = [sos_idx]
+    coverage = torch.zeros(1, src_len, device=device)
+    attn_list = []
+
+    for _ in range(max_length):
+        decoder_input = torch.tensor([seq], dtype=torch.long, device=device)
+        final_dist, attn_weights, new_coverage = model.decoder.forward_step(
+            tgt_step=decoder_input,
+            encoder_outputs=encoder_outputs,
+            src_mask=src_mask,
+            coverage_vector=coverage,
+            src_ids=src,
+            src_oov_map=src_oov_map,
+        )
+
+        # 取最后一步输出分布
+        logits = final_dist[:, -1, :]
+        next_token = torch.argmax(logits, dim=-1).item()
+
+        seq.append(next_token)
+        coverage = new_coverage  # 使用 decoder 返回的更新版覆盖向量
+        attn_list.append(attn_weights.cpu())
+
+        if next_token == eos_idx:
+            break
+
+    attn_tensor = torch.stack(attn_list, dim=0) if attn_list else torch.zeros(1, src_len)
+    return torch.tensor([seq], device=device), attn_tensor.unsqueeze(0)

@@ -59,6 +59,7 @@ class PGCTModel(nn.Module):
             max_tgt_len=max_tgt_len
         )
 
+    # 修正: 返回类型应为 4 个值 (outputs, None, None, coverage_loss)
     def forward(
         self,
         src: torch.Tensor,
@@ -66,14 +67,14 @@ class PGCTModel(nn.Module):
         src_lens: Optional[torch.Tensor] = None,
         src_oov_map: Optional[torch.Tensor] = None,
         teacher_forcing_ratio: float = 1.0
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor], torch.Tensor]:
         """
-        训练阶段前向传播或推理阶段调用。
-        - 当 tgt 提供时，按 teacher_forcing_ratio 决定是否使用 teacher forcing。
-        - 当 tgt 为 None 时，为推理阶段，需调用 generate() 或 beam_search()。
+        训练阶段前向传播。
+        返回 (outputs, None, None, coverage_loss) 以兼容 Seq2Seq 模型的常见返回签名。
         """
         # 编码器前向
         encoder_outputs, _ = self.encoder(src, src_lens)
+        # 修正：通过 encoder 方法获取 src_mask
         src_mask = self.encoder.generate_src_mask(src)
         
         if tgt is not None:
@@ -82,11 +83,12 @@ class PGCTModel(nn.Module):
                 tgt=tgt,
                 encoder_outputs=encoder_outputs,
                 src=src,
-                src_mask=src_mask,
+                src_mask=src_mask, # 传入 src_mask
                 src_oov_map=src_oov_map,
                 teacher_forcing=use_teacher_forcing
             )
-            return outputs, coverage_loss
+            # 修正: 返回 4 个值，其中 2 个为 None 占位符
+            return outputs, None, None, coverage_loss
         else:
             # 推理阶段，用户需调用 generate() 或 beam_search()
             raise ValueError("tgt is None, use generate() or beam_search() for inference.")
