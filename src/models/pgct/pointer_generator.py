@@ -13,6 +13,7 @@ class PointerGenerator(nn.Module):
     def __init__(self, hidden_size: int, embed_size: int, vocab_size: int):
         super().__init__()
         # 生成概率 p_gen 计算层（输入：解码器输出 + 上下文向量 + 嵌入向量）
+        self.mid_linear = nn.Linear(hidden_size * 2, hidden_size)
         self.p_gen_linear = nn.Linear(hidden_size * 2 + embed_size, 1)
         # 词典分布输出层（输入：解码器输出 + 上下文向量）
         self.vocab_linear = nn.Linear(hidden_size * 2, vocab_size)
@@ -37,15 +38,17 @@ class PointerGenerator(nn.Module):
         p_gen_input = torch.cat([decoder_output, context, embedded], dim=1)  # [batch, 2*hidden + embed]
         p_gen = torch.sigmoid(self.p_gen_linear(p_gen_input))  # [batch, 1]
 
-        # 2. 计算词典生成分布 P_vocab
+        # 2. 计算词典生成分布 P_vocab()
         vocab_input = torch.cat([decoder_output, context], dim=1)  # [batch, 2*hidden]
-        vocab_logits = self.vocab_linear(vocab_input)  # [batch, vocab_size]
+        mid_output = torch.tanh(self.mid_linear(vocab_input)) # tanh(V [st, h*t] + b)
+        vocab_logits = self.vocab_linear(mid_output)  # [batch, vocab_size]
+        # vocab_logits = torch.clamp(vocab_logits, -50, 50) #防止溢出
         vocab_dist = F.softmax(vocab_logits, dim=1)  # [batch, vocab_size]
 
         # 3. 处理OOV：构建扩展词表分布（包含源文本中出现的OOV词）
         if src_ids is not None and src_oov_map is not None and src_oov_map.max() >= 0:
-            max_oov = src_oov_map.max().item()
-            extended_size = vocab_size + max_oov + 1  # 基础词表 + OOV词数量
+            max_oov = src_oov_map.max().item() if src_oov_map.max() >= 0 else -1
+            extended_size = vocab_size + max_oov + 1 if max_oov >= 0 else vocab_size # 基础词表 + OOV词数量
         else:
             extended_size = vocab_size
 
@@ -65,10 +68,10 @@ class PointerGenerator(nn.Module):
             if src_oov_map is not None:
                 oov_mask = src_oov_map >= 0  # OOV词掩码
                 copy_indices[oov_mask] = vocab_size + src_oov_map[oov_mask]  # OOV词映射到扩展区域
-
+            assert attn_weights.shape == src_ids.shape, f"attn_weights shape {attn_weights.shape} != src_ids shape {src_ids.shape}"
             # 用注意力权重填充复制分布（按索引累加）
             copy_dist.scatter_add_(1, copy_indices, attn_weights)
 
         # 5. 最终混合分布
         final_dist = p_gen * extended_vocab_dist + (1 - p_gen) * copy_dist
-        return final_dist
+        return final_dist, p_gen.squeeze(-1), vocab_dist
