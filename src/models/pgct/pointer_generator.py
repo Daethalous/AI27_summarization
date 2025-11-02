@@ -24,9 +24,10 @@ class PointerGenerator(nn.Module):
         context: torch.Tensor,         # 上下文向量（注意力加权的编码器输出）[batch, hidden_size]
         embedded: torch.Tensor,        # 解码器输入嵌入 [batch, embed_size]
         vocab_size: int,               # 基础词表大小
+        attn_weights: torch.Tensor,     # 注意力权重（用于复制分布）[batch, src_len]
         src_ids: Optional[torch.Tensor] = None,  # 源文本词表索引 [batch, src_len]
-        src_oov_map: Optional[torch.Tensor] = None,  # OOV映射表 [batch, src_len]
-        attn_weights: torch.Tensor     # 注意力权重（用于复制分布）[batch, src_len]
+        src_oov_map: Optional[torch.Tensor] = None  # OOV映射表 [batch, src_len]
+        
     ) -> torch.Tensor:
         """
         计算最终混合分布：p_gen * 词典分布 + (1-p_gen) * 复制分布
