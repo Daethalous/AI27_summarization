@@ -60,7 +60,8 @@ def pgct_beam_search_decode(
                 continue
 
             decoder_input = torch.tensor([node.sequence], dtype=torch.long, device=device)
-            final_dist, attn_weights, _ = model.decoder.forward_step(
+            # 修正接口调用：接收 4 个返回值，并忽略第 4 个 (cov_loss_t)
+            final_dist, attn_weights, new_coverage_vector, _ = model.decoder.forward_step(
                 tgt_step=decoder_input,
                 encoder_outputs=encoder_outputs,
                 src_mask=src_mask,
@@ -74,7 +75,8 @@ def pgct_beam_search_decode(
 
             for log_prob_t, token_id in zip(topk_log_probs, topk_ids):
                 new_seq = node.sequence + [token_id.item()]
-                new_cov = node.coverage_vector + attn_weights
+                # 使用 forward_step 返回的更新后的覆盖向量
+                new_cov = new_coverage_vector 
                 new_attns = node.attn_weights_list + [attn_weights.cpu()]
                 candidates.append(
                     BeamNode(new_seq, node.score + log_prob_t.item(), new_cov, node.log_prob + log_prob_t.item(), new_attns)
@@ -113,7 +115,8 @@ def pgct_greedy_decode(
 
     for _ in range(max_length):
         decoder_input = torch.tensor([seq], dtype=torch.long, device=device)
-        final_dist, attn_weights, new_coverage = model.decoder.forward_step(
+        # 修正接口调用：接收 4 个返回值，并忽略第 4 个 (cov_loss_t)
+        final_dist, attn_weights, new_coverage, _ = model.decoder.forward_step(
             tgt_step=decoder_input,
             encoder_outputs=encoder_outputs,
             src_mask=src_mask,
@@ -123,7 +126,8 @@ def pgct_greedy_decode(
         )
 
         # 取最后一步输出分布
-        logits = final_dist[:, -1, :]
+        # NOTE: final_dist 应该是 [1, 1, extended_vocab_size]，需要正确索引
+        logits = final_dist.squeeze(0) 
         next_token = torch.argmax(logits, dim=-1).item()
 
         seq.append(next_token)

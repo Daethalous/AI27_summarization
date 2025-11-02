@@ -13,10 +13,10 @@ class PointerGenerator(nn.Module):
     def __init__(self, hidden_size: int, embed_size: int, vocab_size: int):
         super().__init__()
         # 生成概率 p_gen 计算层（输入：解码器输出 + 上下文向量 + 嵌入向量）
-        self.mid_linear = nn.Linear(hidden_size * 2, hidden_size)
-        self.p_gen_linear = nn.Linear(hidden_size * 2 + embed_size, 1)
+        self.mid_linear = nn.Linear(hidden_size * 2, hidden_size,bias=True)
+        self.p_gen_linear = nn.Linear(hidden_size * 2 + embed_size, 1,bias=True)
         # 修正: vocab_linear 的输入应该是 mid_output 的大小，即 hidden_size
-        self.vocab_linear = nn.Linear(hidden_size, vocab_size)
+        self.vocab_linear = nn.Linear(hidden_size, vocab_size,bias=True)
 
     def compute_final_dist(
         self,
