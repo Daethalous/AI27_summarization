@@ -23,7 +23,7 @@ class CoverageMechanism(nn.Module):
         # 严格遵循论文公式 (9) 实现加性注意力组件
         self.W_h = nn.Linear(hidden_size, hidden_size, bias=False)  # 作用于编码器输出 h_i
         self.W_s = nn.Linear(hidden_size, hidden_size, bias=False)  # 作用于解码器输出 s_t
-        # Coverage Vector 是 [B, S]，每个元素是标量，因此输入维度是 1
+        # Coverage Vector 是 [B, S]，每个元素是标量，W_c 负责将其映射到 H 维
         self.W_c = nn.Linear(1, hidden_size, bias=False)            # 作用于覆盖向量 c_{t-1}
         self.V = nn.Linear(hidden_size, 1, bias=False)              # 注意力分数映射 v^T
         self.b_attn = nn.Parameter(torch.zeros(hidden_size))        # 偏置项 b (作用于 hidden_size 维度)
@@ -43,13 +43,17 @@ class CoverageMechanism(nn.Module):
         s_t_expanded = decoder_output.unsqueeze(1)  # [B, 1, H]
 
         # 2. 计算 Attention Score 组件 (遵循论文公式 9)
-        Wh_h = self.W_h(encoder_outputs)         # [B, S, H]
-        Ws_s = self.W_s(s_t_expanded)            # [B, 1, H] (通过广播相加)
-        coverage_input = coverage_vector.unsqueeze(-1) # [B, S, 1] W_c适配标量输入的调整
-        Wc_c = self.W_c(coverage_input)          # [B, S, H] 
+        Wh_h = self.W_h(encoder_outputs)            # [B, S, H]
+        Ws_s = self.W_s(s_t_expanded)               # [B, 1, H] (通过广播相加)
+        
+        # Wc_c: W_c * c_{t-1}. Input [B, S, 1] -> Output [B, S, H]
+        coverage_input = coverage_vector.unsqueeze(-1) 
+        Wc_c = self.W_c(coverage_input)             # [B, S, H] 
         
         # 3. 合并组件计算注意力 Logits (score)
+        # attn_input = W_h h_i + W_s s_t + W_c c_{t-1} + b (H-dimensional)
         attn_input = Wh_h + Ws_s + Wc_c + self.b_attn # [B, S, H]
+        # attn_logits = v^T * tanh(attn_input) (1-dimensional)
         attn_logits = self.V(torch.tanh(attn_input)).squeeze(-1) # [B, S]
         
         # 4. CRITICAL FIX: 钳制 Logits 防止 Softmax 溢出
@@ -87,24 +91,28 @@ class CoverageMechanism(nn.Module):
         B, T, H = decoder_outputs.size()
         S = encoder_outputs.size(1)
 
-        # --- 第一阶段：计算 Attention Logits E' (不含覆盖项) ---
-        Wh_h = self.W_h(encoder_outputs).unsqueeze(1)    # [B, 1, S, H] (广播 S)
-        Ws_s = self.W_s(decoder_outputs).unsqueeze(2)    # [B, T, 1, H] (广播 T)
+        # --- 第一阶段：计算 Attention Input components (Wh_h, Ws_s, b_attn) ---
+        Wh_h = self.W_h(encoder_outputs).unsqueeze(1)    # [B, 1, S, H] (广播 T)
+        Ws_s = self.W_s(decoder_outputs).unsqueeze(2)    # [B, T, 1, H] (广播 S)
         
-        # E_prime_input (Wh_h + Ws_s + b): [B, T, S, H]
-        E_prime_input = Wh_h + Ws_s + self.b_attn
-        E_prime = self.V(torch.tanh(E_prime_input)).squeeze(-1) # E' [B, T, S]
+        # Base Attention Input (Wh_h + Ws_s + b): [B, T, S, H]
+        E_base_input = Wh_h + Ws_s + self.b_attn # [B, T, S, H]
 
         # --- 第二阶段：计算 c_{t-1} 覆盖向量 ---
         
-        # Preliminary Attention A_prelim (用于计算 c_{t-1})
-        E_prelim_clamped = torch.clamp(E_prime, min=-self.MAX_LOGIT, max=self.MAX_LOGIT) 
+        # Preliminary Logits E' (不含覆盖项) - 用于计算 c_{t-1}
+        # A_prelim = softmax(V * tanh(E_base_input))
+        E_prelim = self.V(torch.tanh(E_base_input)).squeeze(-1) # E_prelim [B, T, S]
+        
+        # 钳制 Logits 防止 Softmax 溢出
+        E_prelim_clamped = torch.clamp(E_prelim, min=-self.MAX_LOGIT, max=self.MAX_LOGIT) 
         if src_mask is not None:
+            # 广播 src_mask 以匹配 [B, T, S]
             E_prelim_clamped = E_prelim_clamped.masked_fill(src_mask.unsqueeze(1), float('-inf'))
         
         A_prelim = F.softmax(E_prelim_clamped, dim=-1) # A_prelim [B, T, S]
         
-        # 计算 c_{t-1}：累加并错位
+        # 计算 c_{t-1}：累加并错位 (c_0 = 0)
         cumulative_attention = torch.cumsum(A_prelim, dim=1) # c_t (包含当前 a_t)
         
         coverage_vector_shifted = torch.cat([
@@ -114,12 +122,20 @@ class CoverageMechanism(nn.Module):
 
         # --- 第三阶段：计算最终 Logits E (含覆盖项 Wc_c) 和 A_final ---
         
-        Wc_c = self.W_c(coverage_vector_shifted.unsqueeze(-1)).squeeze(-1) # Wc_c [B, T, S]
-        E_final = E_prime + Wc_c # 最终 Logits E = E' + Wc_c [B, T, S]
+        # Wc_c term: W_c * c_{t-1}. Input [B, T, S, 1] -> Output [B, T, S, H]
+        # CRITICAL FIX: 确保 Wc_c 保持 H 维，以便与 E_base_input 相加 (遵循加性注意力公式)
+        Wc_c = self.W_c(coverage_vector_shifted.unsqueeze(-1)) # Wc_c [B, T, S, H] 
+        
+        # E_final_input = (Wh_h + Ws_s + b) + Wc_c
+        E_final_input = E_base_input + Wc_c # [B, T, S, H]
+        
+        # E_final = V * tanh(E_final_input)
+        E_final = self.V(torch.tanh(E_final_input)).squeeze(-1) # E_final [B, T, S]
 
         # 钳制和掩码
         E_final_clamped = torch.clamp(E_final, min=-self.MAX_LOGIT, max=self.MAX_LOGIT) 
         if src_mask is not None:
+            # 广播 src_mask 以匹配 [B, T, S]
             E_final_clamped = E_final_clamped.masked_fill(src_mask.unsqueeze(1), float('-inf'))
 
         A_final = F.softmax(E_final_clamped, dim=-1) # A_final [B, T, S]

@@ -66,6 +66,7 @@ class PGCTModel(nn.Module):
         tgt: Optional[torch.Tensor] = None,
         src_lens: Optional[torch.Tensor] = None,
         src_oov_map: Optional[torch.Tensor] = None,
+        # max_oov_len: Optional[torch.Tensor] = None, # <--- 新增参数
         teacher_forcing_ratio: float = 1.0
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor], torch.Tensor]:
         """
@@ -85,6 +86,7 @@ class PGCTModel(nn.Module):
                 src=src,
                 src_mask=src_mask, # 传入 src_mask
                 src_oov_map=src_oov_map,
+                # max_oov_len=max_oov_len, # <--- 传递新增参数
                 teacher_forcing=use_teacher_forcing
             )
             # 修正: 返回 4 个值，其中 2 个为 None 占位符
@@ -99,6 +101,7 @@ class PGCTModel(nn.Module):
         src: torch.Tensor,
         src_lens: Optional[torch.Tensor] = None,
         src_oov_map: Optional[torch.Tensor] = None,
+        # max_oov_len: Optional[torch.Tensor] = None, # <--- 新增参数
         max_length: int = 100,
         sos_idx: int = 2,
         eos_idx: int = 3,
@@ -110,6 +113,7 @@ class PGCTModel(nn.Module):
             src=src,
             src_lens=src_lens,
             src_oov_map=src_oov_map,
+            # max_oov_len=max_oov_len, # <--- 传递新增参数
             max_length=max_length,
             sos_idx=sos_idx,
             eos_idx=eos_idx,
@@ -122,6 +126,7 @@ class PGCTModel(nn.Module):
         src: torch.Tensor,
         src_lens: Optional[torch.Tensor] = None,
         src_oov_map: Optional[torch.Tensor] = None,
+        # max_oov_len: Optional[torch.Tensor] = None, # <--- 新增参数
         beam_size: int = 5,
         max_length: int = 100,
         sos_idx: int = 2,
@@ -134,6 +139,7 @@ class PGCTModel(nn.Module):
             src=src,
             src_lens=src_lens,
             src_oov_map=src_oov_map,
+            # max_oov_len=max_oov_len, # <--- 传递新增参数
             beam_size=beam_size,
             max_length=max_length,
             sos_idx=sos_idx,

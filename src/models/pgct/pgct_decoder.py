@@ -64,7 +64,6 @@ class PGCTDecoder(nn.Module):
     # -------------------------------------------------------------------------
     # Stepwise decoding (for inference / beam search)
     # -------------------------------------------------------------------------
-    # 保持不变，用于推理阶段
     def forward_step(
         self,
         tgt_step: torch.Tensor,
@@ -72,24 +71,29 @@ class PGCTDecoder(nn.Module):
         src_mask: torch.Tensor,
         coverage_vector: torch.Tensor,
         src_ids: torch.Tensor,
-        src_oov_map: Optional[torch.Tensor] = None
+        src_oov_map: Optional[torch.Tensor] = None,
+        # max_oov_len: Optional[torch.Tensor] = None # <--- 新增
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """单步解码（用于推理阶段）"""
         tgt_embed = self.embedding(tgt_step)
         tgt_embed = self.embed_proj(tgt_embed)
         tgt_embed = self.pos_encoding(tgt_embed)
         
-        # Transformer解码器调用（未修正缺失的因果掩码和tgt_key_padding_mask，保持代码不变）
-        # 注意: 如果 tgt_step 包含多个时间步，这里缺少 causal mask 和 key padding mask 可能会导致推理错误。
+        # 显式生成并传入因果掩码和填充掩码，使 forward_step 对序列长度 L>=1 都健壮
+        tgt_mask, tgt_key_padding_mask = self.generate_tgt_mask(tgt_step)
+        
         dec_output = self.transformer_decoder(
             tgt=tgt_embed,
             memory=encoder_outputs,
+            tgt_mask=tgt_mask,
+            tgt_key_padding_mask=tgt_key_padding_mask,
             memory_key_padding_mask=src_mask
         )
+        
+        # 推理阶段通常只关心最后一个时间步的输出
         dec_output_t = dec_output[:, -1, :]
         
         # Coverage attention
-        # 注意：此处调用 compute_coverage_attention 应该对应 coverage.py 中的 compute_stepwise_attention
         context, attn_weights, coverage_vector, cov_loss_t = self.coverage.compute_stepwise_attention(
             decoder_output=dec_output_t,
             encoder_outputs=encoder_outputs,
@@ -98,6 +102,7 @@ class PGCTDecoder(nn.Module):
         )
         
         # Pointer mechanism
+        # 注意：这里我们只取最后一个时间步的嵌入作为输入
         raw_embedded_t = self.embedding(tgt_step[:, -1])
         final_dist, _, _ = self.pointer.compute_final_dist(
             decoder_output=dec_output_t,
@@ -106,13 +111,14 @@ class PGCTDecoder(nn.Module):
             vocab_size=self.vocab_size,
             src_ids=src_ids,
             src_oov_map=src_oov_map,
-            attn_weights=attn_weights
+            attn_weights=attn_weights,
+            # max_oov_len=max_oov_len # <--- 新增
         )
 
         return final_dist, attn_weights, coverage_vector, cov_loss_t
 
     # -------------------------------------------------------------------------
-    # Parallelized training forward (已修正为并行设计)
+    # Parallelized training forward (保持不变)
     # -------------------------------------------------------------------------
     def forward(
         self,
@@ -121,6 +127,7 @@ class PGCTDecoder(nn.Module):
         src: torch.Tensor,
         src_mask: torch.Tensor,
         src_oov_map: Optional[torch.Tensor] = None,
+        # max_oov_len: Optional[torch.Tensor] = None, # <--- 新增
         teacher_forcing: bool = True # 保留参数签名，但忽略其值
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """训练阶段前向传播（并行 coverage 实现）"""
@@ -146,7 +153,6 @@ class PGCTDecoder(nn.Module):
         ) # [B, T, H]
 
         # 3. Parallel Coverage Calculation (一次性计算所有步骤的注意力、上下文和损失)
-        # Context [B, T, H], all_attn_weights [B, T, S], total_cov_loss [1]
         context_all_steps, all_attn_weights, total_cov_loss = self.coverage.compute_parallel_training(
             decoder_outputs=dec_output,
             encoder_outputs=encoder_outputs,
@@ -157,14 +163,15 @@ class PGCTDecoder(nn.Module):
         all_dists = []
         for t in range(tgt_len_in):
             # context 和 attn_weights 使用并行计算得到的第 t 步结果
-            final_dist, _, _ = self.pointer.compute_final_dist( 
+            final_dist, _, _ = self.pointer.compute_final_dist(
                 decoder_output=dec_output[:, t, :],
-                context=context_all_steps[:, t, :], 
+                context=context_all_steps[:, t, :],
                 embedded=raw_embedded[:, t, :],
                 vocab_size=self.vocab_size,
                 src_ids=src,
                 src_oov_map=src_oov_map,
-                attn_weights=all_attn_weights[:, t, :]
+                attn_weights=all_attn_weights[:, t, :],
+                # max_oov_len=max_oov_len # <--- 新增
             )
             all_dists.append(final_dist)
 

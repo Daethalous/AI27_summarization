@@ -95,9 +95,16 @@ def quick_test_pgct(
             src_oov_map = batch.get('src_oov_map', None)
             if src_oov_map is not None:
                 src_oov_map = src_oov_map.to(device)
+            # <--- 新增: 提取 max_oov_len
+            # max_oov_len = batch.get('max_oov_len', None)
 
             optimizer.zero_grad()
-            outputs, _, _, coverage_loss = model(src, tgt, src_oov_map=src_oov_map, teacher_forcing_ratio=1.0)
+            outputs, _, _, coverage_loss = model(
+                src, 
+                tgt, 
+                src_oov_map=src_oov_map,
+                # max_oov_len=max_oov_len, # <--- 传递 max_oov_len
+                teacher_forcing_ratio=1.0)
 
             # NLL损失
             output_flat = outputs.reshape(-1, outputs.size(-1))
