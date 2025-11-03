@@ -35,6 +35,7 @@ class PGCTModel(nn.Module):
         self.vocab_size = vocab_size
         self.pad_idx = pad_idx
         self.max_tgt_len = max_tgt_len
+        self.hidden_size = hidden_size #new
         
         self.encoder = PGCTEncoder(
             vocab_size=vocab_size,
@@ -59,6 +60,7 @@ class PGCTModel(nn.Module):
             max_tgt_len=max_tgt_len
         )
 
+        self.encoder_proj = nn.Linear(hidden_size, hidden_size)
     # 修正: 返回类型应为 4 个值 (outputs, None, None, coverage_loss)
     def forward(
         self,
@@ -75,6 +77,9 @@ class PGCTModel(nn.Module):
         """
         # 编码器前向
         encoder_outputs, _ = self.encoder(src, src_lens)
+        # <---修正: 如果 encoder 输出维度不等于 decoder hidden_size，则通过线性映射
+        if encoder_outputs.size(-1) != self.hidden_size:
+            encoder_outputs = self.encoder_proj(encoder_outputs)
         # 修正：通过 encoder 方法获取 src_mask
         src_mask = self.encoder.generate_src_mask(src)
         

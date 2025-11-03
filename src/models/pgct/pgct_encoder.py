@@ -1,4 +1,4 @@
-
+# latset
 """Transformer Encoder and shared utility classes for PGCT."""
 from __future__ import annotations
 
@@ -87,5 +87,7 @@ class PGCTEncoder(nn.Module):
         
         src_mask = self.generate_src_mask(src, src_lens)
         encoder_outputs = self.transformer_encoder(embed, src_key_padding_mask=src_mask)
+
+        
         
         return encoder_outputs, src_mask

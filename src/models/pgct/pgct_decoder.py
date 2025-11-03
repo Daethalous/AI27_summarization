@@ -26,6 +26,7 @@ class PGCTDecoder(nn.Module):
     ):
         super().__init__()
         self.vocab_size = vocab_size
+        self.hidden_size = hidden_size #new
         self.d_model = hidden_size
         self.pad_idx = pad_idx
         self.cov_loss_weight = cov_loss_weight
@@ -87,7 +88,8 @@ class PGCTDecoder(nn.Module):
             memory=encoder_outputs,
             tgt_mask=tgt_mask,
             tgt_key_padding_mask=tgt_key_padding_mask,
-            memory_key_padding_mask=src_mask
+            # memory_key_padding_mask=src_mask
+            memory_key_padding_mask=src_mask.bool() if src_mask is not None else None
         )
         
         # 推理阶段通常只关心最后一个时间步的输出

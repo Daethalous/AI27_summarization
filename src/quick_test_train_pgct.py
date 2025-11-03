@@ -62,7 +62,15 @@ def quick_test_pgct(
     vocab = Vocab.load(str(vocab_path))
     pad_idx = vocab.word2idx['<PAD>']
 
-    train_loader = get_dataloader(str(processed_dir), batch_size=batch_size, split="train", shuffle=True)
+    # train_loader = get_dataloader(str(processed_dir), batch_size=batch_size, split="train", shuffle=True)
+    train_loader = get_dataloader(
+        str(processed_dir), 
+        batch_size=batch_size, 
+        split="train", 
+        shuffle=True,
+        include_oov=True,  # 启用 PG 模式
+        vocab=vocab        # 传递词表，供 PGCollateFn 使用
+    )
     actual_samples = min(num_samples, len(train_loader.dataset))
     train_subset = Subset(train_loader.dataset, list(range(actual_samples)))
     train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True, collate_fn=train_loader.collate_fn)
