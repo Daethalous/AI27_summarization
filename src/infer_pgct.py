@@ -191,7 +191,7 @@ def collect_inputs(input_path: str) -> List[Path]:
     path = Path(input_path)
     if not path.exists():
         raise FileNotFoundError(f"未找到输入路径: {input_path}")
-    
+
     if path.is_dir():
         # 递归查找所有 .txt 文件并排序
         txt_files = sorted([p for p in path.glob('*.txt') if p.is_file()])

@@ -47,7 +47,7 @@ def pgct_beam_search_decode(
     if src_mask.dim() == 3:  # <--新增：防止被错误扩展
         src_mask = src_mask.squeeze(1)
     src_mask = src_mask.bool()
-    
+
     src_len = encoder_outputs.size(1)
 
     beams = [BeamNode([sos_idx], 0.0, torch.zeros(1, src_len, device=device), 0.0)]
@@ -116,7 +116,7 @@ def pgct_greedy_decode(
     if src_mask.dim() == 3: # <--新增
         src_mask = src_mask.squeeze(1)
     src_mask = src_mask.bool()
-    
+
     src_len = encoder_outputs.size(1)
 
     seq = [sos_idx]

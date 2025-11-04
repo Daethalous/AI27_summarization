@@ -53,17 +53,17 @@ def calculate_nll_loss(predictions: torch.Tensor, targets: torch.Tensor, pad_idx
     B, T, V = predictions.shape
     preds_flat = predictions.reshape(-1, V)
     targs_flat = targets.reshape(-1)
-    
+
     # 使用 log(P) 以确保数值稳定性
     log_probs = torch.log(preds_flat + 1e-12) # 避免 log(0)
-    
+
     # 针对目标索引 targs_flat 收集对应的 log 概率
     # targs_flat 的值可以大于 vocab_size (对应 OOV 词)
     picked = log_probs.gather(1, targs_flat.unsqueeze(1)).squeeze(1)
-    
+
     # 计算有效词的掩码 (非 PAD 词)
     mask = (targs_flat != pad_idx).float()
-    
+
     # NLL 损失: -log(P) 的平均值
     loss = -(picked * mask).sum() / mask.sum()
     return loss
@@ -74,7 +74,7 @@ def generate_val_summaries(model, val_loader, vocab, device, max_tgt_len):
     model.eval()
     generated_summaries = []
     reference_summaries = []
-    
+
     with torch.no_grad():
         for batch in tqdm(val_loader, desc="生成验证集摘要"):
             src = batch['src'].to(device)
@@ -82,7 +82,7 @@ def generate_val_summaries(model, val_loader, vocab, device, max_tgt_len):
             src_oov_map = batch['src_oov_map'].to(device)
             oov_dicts = batch['oov_dicts']  # 每个样本的 OOV 词映射
             references = batch['tgt_text']  # 参考摘要文本
-            
+
             # 贪心解码生成摘要
             pred_ids, _ = pgct_greedy_decode(
                 model=model,
@@ -94,7 +94,7 @@ def generate_val_summaries(model, val_loader, vocab, device, max_tgt_len):
                 eos_idx=vocab.eos_idx,
                 device=device
             )
-            
+
             # 将预测索引转换为文本（处理 OOV）
             for i in range(len(pred_ids)):
                 pred_tokens = []
@@ -111,7 +111,7 @@ def generate_val_summaries(model, val_loader, vocab, device, max_tgt_len):
                         pred_tokens.append(token)
                 generated_summaries.append(' '.join(pred_tokens))
                 reference_summaries.append(references[i])
-    
+
     return generated_summaries, reference_summaries
 
 
@@ -119,7 +119,7 @@ def main():
     parser = argparse.ArgumentParser()
     # 新增：添加 --config 参数，用于指定YAML配置文件路径
     parser.add_argument("--config", type=str, help="YAML配置文件路径（例如 ../configs/pgct.yaml）")
-    
+
     # 原有参数保留，默认值将作为最低优先级
     parser.add_argument("--data_dir", type=str, default="../data/raw")
     parser.add_argument("--save_dir", type=str, default="../checkpoints_pgct")
@@ -167,7 +167,7 @@ def main():
     args.max_tgt_len = args.max_tgt_len or data_config.get("max_tgt_len", 100)
     max_vocab_size = data_config.get("max_vocab_size", 50000)  # 词表参数单独提取
     min_freq = data_config.get("min_freq", 5)
-    
+
     # 模型相关参数（对应配置文件model字段）
     model_config = config.get("model", {})
     args.embed_size = args.embed_size or model_config.get("embed_size", 512)
@@ -177,7 +177,7 @@ def main():
     args.nhead = args.nhead or model_config.get("nhead", 8)
     args.dropout = args.dropout or model_config.get("dropout", 0.1)
     args.cov_loss_weight = args.cov_loss_weight or model_config.get("cov_loss_weight", 1.0)
-    
+
     # 训练相关参数（对应配置文件train字段）
     train_config = config.get("train", {})
     args.save_dir = args.save_dir or train_config.get("save_dir", "../checkpoints_pgct")
@@ -188,7 +188,7 @@ def main():
     args.grad_clip = args.grad_clip or train_config.get("grad_clip", 5.0)
     args.save_every = args.save_every or train_config.get("save_every", 2)
     args.num_samples = args.num_samples or train_config.get("num_samples", None)
-    
+
     # 打印最终生效的核心参数（方便验证优先级）
     logger.info(f"🔧 最终生效的核心参数:")
     logger.info(f"  - 模型参数: hidden_size={args.hidden_size}, embed_size={args.embed_size}, nhead={args.nhead}")
@@ -202,7 +202,7 @@ def main():
     # 优先从配置文件读取词表路径（如果有）
     vocab_path = data_config.get("vocab_path", processed_dir / "vocab.json")
     vocab_path = Path(vocab_path)
-    
+
     # 始终运行 prepare_datasets，以确保 PG 兼容的原始 tokens 被保存
     logger.warning(f"确保 {processed_dir} 中的缓存文件包含 PG 所需的原始 tokens，若没有，将重新生成数据...")
     prepare_datasets(
@@ -231,7 +231,7 @@ def main():
         vocab=vocab,
         include_oov=True # 启用 PG 机制
     )
-    
+
     if args.num_samples is not None and args.num_samples < len(full_train_loader.dataset):
         # 创建一个数据集子集
         indices = list(range(args.num_samples))
@@ -247,7 +247,7 @@ def main():
         logger.info(f"🚧 限制训练集大小为 {args.num_samples} 个样本。")
     else:
         train_loader = full_train_loader
-        
+
     val_loader = get_dataloader(
         str(processed_dir), 
         batch_size=args.batch_size, 
@@ -274,15 +274,15 @@ def main():
         max_tgt_len=args.max_tgt_len
     ).to(device)
     logger.info("PGCTModel 初始化完成")
-    
+
     # 创建保存目录
     Path(args.save_dir).mkdir(parents=True, exist_ok=True)
-    
+
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
-    
+
     # 学习率调度器
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=2, verbose=True)
-    
+
     tb_writer = SummaryWriter(log_dir=Path(args.save_dir)/"runs")
 
     best_val_loss = float("inf")
@@ -293,17 +293,17 @@ def main():
         running_nll = 0.0
         running_cov = 0.0
         pbar = tqdm(train_loader, desc=f"Train Epoch {epoch}/{args.num_epochs}")
-        
+
         for batch in pbar:
             src = batch['src'].to(device)
             # tgt 现在是扩展词表索引 (tgt_ext)
             tgt = batch['tgt'].to(device) 
-            
+
             # src_oov_map 用于 Pointer-Generator 机制 (源文本的扩展索引)
             src_oov_map = batch['src_oov_map'].to(device)
 
             optimizer.zero_grad()
-            
+
             # PGCTModel.forward 计算输出和损失
             outputs, _, _, coverage_loss = model(
                 src, 
@@ -311,13 +311,13 @@ def main():
                 src_oov_map=src_oov_map, 
                 teacher_forcing_ratio=args.teacher_forcing_ratio
             ) # outputs: [B, T_out, V_ext]
-            
+
             # 目标序列需要移位 (移除 SOS 令牌)
             nll_loss = calculate_nll_loss(outputs, tgt[:, 1:], pad_idx)
-            
+
             # 总损失 = NLL Loss + Coverage Loss
             total_loss = nll_loss + coverage_loss
-            
+
             total_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args.grad_clip)
             optimizer.step()
@@ -349,17 +349,17 @@ def main():
                     src_oov_map=src_oov_map, 
                     teacher_forcing_ratio=1.0
                 )
-                
+
                 nll_loss = calculate_nll_loss(outputs, tgt[:, 1:], pad_idx)
                 val_total_loss += (nll_loss + coverage_loss).item()
 
         avg_val_loss = val_total_loss / len(val_loader)
         logger.info(f"Epoch {epoch} Val Loss: {avg_val_loss:.4f}")
         tb_writer.add_scalar("Val/TotalLoss", avg_val_loss, epoch)
-        
+
         # 学习率调度
         scheduler.step(avg_val_loss)
-        
+
         # -------------------------------------------------------------------------
         # ROUGE 指标计算（完整实现）
         if HAS_ROUGE and epoch % 2 == 0:  # 每2个epoch计算一次ROUGE（节省时间）
@@ -376,7 +376,7 @@ def main():
             val_rouge_l = rouge_scores['rouge-l']['f'] * 100  # 转为百分比
             logger.info(f"Epoch {epoch} Val ROUGE-L: {val_rouge_l:.2f}")
             tb_writer.add_scalar("Val/ROUGE-L", val_rouge_l, epoch)
-            
+
             # 可选：保存基于 ROUGE 的最佳模型
             if val_rouge_l > best_rouge_l:
                 best_rouge_l = val_rouge_l

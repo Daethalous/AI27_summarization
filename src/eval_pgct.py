@@ -191,7 +191,7 @@ def main(args):
     # 关键修改4：修复模型加载（兼容无 config 的 checkpoint）
     print(f"正在加载模型: {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    
+
     # 构建模型配置（优先级：args > config > 默认值）
     model_cfg = {
         'embed_size': args.embed_size or config.get('embed_size', 512),
