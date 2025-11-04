@@ -47,7 +47,7 @@ def pgct_beam_search_decode(
     if src_mask.dim() == 3:  # <--新增：防止被错误扩展
         src_mask = src_mask.squeeze(1)
     src_mask = src_mask.bool()
-
+    
     src_len = encoder_outputs.size(1)
 
     beams = [BeamNode([sos_idx], 0.0, torch.zeros(1, src_len, device=device), 0.0)]
@@ -81,7 +81,7 @@ def pgct_beam_search_decode(
             for log_prob_t, token_id in zip(topk_log_probs, topk_ids):
                 new_seq = node.sequence + [token_id.item()]
                 # 使用 forward_step 返回的更新后的覆盖向量
-                new_cov = new_coverage_vector
+                new_cov = new_coverage_vector 
                 new_attns = node.attn_weights_list + [attn_weights.cpu()]
                 candidates.append(
                     BeamNode(new_seq, node.score + log_prob_t.item(), new_cov, node.log_prob + log_prob_t.item(), new_attns)
@@ -116,7 +116,7 @@ def pgct_greedy_decode(
     if src_mask.dim() == 3: # <--新增
         src_mask = src_mask.squeeze(1)
     src_mask = src_mask.bool()
-
+    
     src_len = encoder_outputs.size(1)
 
     seq = [sos_idx]
@@ -137,7 +137,7 @@ def pgct_greedy_decode(
 
         # 取最后一步输出分布
         # NOTE: final_dist 应该是 [1, 1, extended_vocab_size]，需要正确索引
-        logits = final_dist.squeeze(0)
+        logits = final_dist.squeeze(0) 
         next_token = torch.argmax(logits, dim=-1).item()
 
         seq.append(next_token)

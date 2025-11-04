@@ -10,7 +10,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 import logging
-import argparse
+import argparse 
 
 import torch
 from torch.utils.data import DataLoader, Subset
@@ -64,9 +64,9 @@ def quick_test_pgct(
 
     # train_loader = get_dataloader(str(processed_dir), batch_size=batch_size, split="train", shuffle=True)
     train_loader = get_dataloader(
-        str(processed_dir),
-        batch_size=batch_size,
-        split="train",
+        str(processed_dir), 
+        batch_size=batch_size, 
+        split="train", 
         shuffle=True,
         include_oov=True,  # 启用 PG 模式
         vocab=vocab        # 传递词表，供 PGCollateFn 使用
@@ -96,7 +96,7 @@ def quick_test_pgct(
     for epoch in range(num_epochs):
         model.train()
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
-
+        
         for batch in pbar:
             src = batch['src'].to(device)
             tgt = batch['tgt'].to(device)
@@ -108,8 +108,8 @@ def quick_test_pgct(
 
             optimizer.zero_grad()
             outputs, _, _, coverage_loss = model(
-                src,
-                tgt,
+                src, 
+                tgt, 
                 src_oov_map=src_oov_map,
                 # max_oov_len=max_oov_len, # <--- 传递 max_oov_len
                 teacher_forcing_ratio=1.0)
@@ -117,14 +117,14 @@ def quick_test_pgct(
             # NLL损失
             output_flat = outputs.reshape(-1, outputs.size(-1))
             tgt_flat = tgt[:, 1:].reshape(-1)
-
+            
             # 修正：使用 torch.clamp_min 确保 log 的输入大于一个极小数，防止 log(0) 导致的 NaN
             log_probs = torch.log(torch.clamp_min(output_flat, 1e-12))
-
+            
             target_log_probs = log_probs.gather(1, tgt_flat.unsqueeze(1)).squeeze(1)
-
+            
             mask = (tgt_flat != pad_idx).float()
-
+            
             mask_sum = mask.sum()
             if mask_sum.item() == 0:
                 nll_loss = torch.tensor(0.0, device=device)
@@ -133,18 +133,18 @@ def quick_test_pgct(
 
             if isinstance(coverage_loss, (float, int)):
                 coverage_loss = torch.tensor(coverage_loss, device=device)
-
+            
             total_loss = nll_loss + coverage_loss
-
+            
             # 检查总损失是否为 NaN
             if not torch.isnan(total_loss).any():
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
                 optimizer.step()
-
+                
                 pbar.set_postfix({
-                    "NLL": f"{nll_loss.item():.4f}",
-                    "Cov": f"{coverage_loss.item():.4f}",
+                    "NLL": f"{nll_loss.item():.4f}", 
+                    "Cov": f"{coverage_loss.item():.4f}", 
                     "Total": f"{total_loss.item():.4f}"
                 })
             else:
@@ -160,9 +160,9 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", type=str, default="../data/raw", help="Directory for raw data.")
     parser.add_argument("--num_samples", type=int, default=100, help="Number of samples to use for quick test.")
     parser.add_argument("--num_epochs", type=int, default=1, help="Number of epochs to run.")
-
+    
     args = parser.parse_args()
-
+    
     quick_test_pgct(
         data_dir=args.data_dir,
         num_samples=args.num_samples,
