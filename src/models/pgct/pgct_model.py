@@ -1,18 +1,11 @@
-
 """完整的Transformer+Pointer-Generator+Coverage模型 (Model Aggregator)."""
 from __future__ import annotations
-
 from typing import Optional, Tuple
-
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-
-# 导入组件
 from .pgct_encoder import PGCTEncoder
 from .pgct_decoder import PGCTDecoder
-# 导入PGCT专用的解码工具函数
-from .pgct_decoding import pgct_greedy_decode, pgct_beam_search_decode 
+from .pgct_decoding import pgct_greedy_decode, pgct_beam_search_decode
 
 
 class PGCTModel(nn.Module):
@@ -20,8 +13,8 @@ class PGCTModel(nn.Module):
     def __init__(
         self,
         vocab_size: int,
-        embed_size: int = 256,
-        hidden_size: int = 256,
+        embed_size: int = 512,
+        hidden_size: int = 512,
         num_encoder_layers: int = 3,
         num_decoder_layers: int = 3,
         nhead: int = 8,
@@ -35,8 +28,8 @@ class PGCTModel(nn.Module):
         self.vocab_size = vocab_size
         self.pad_idx = pad_idx
         self.max_tgt_len = max_tgt_len
-        self.hidden_size = hidden_size #new
-        
+        self.hidden_size = hidden_size
+
         self.encoder = PGCTEncoder(
             vocab_size=vocab_size,
             embed_size=embed_size,
@@ -47,7 +40,7 @@ class PGCTModel(nn.Module):
             pad_idx=pad_idx,
             max_src_len=max_src_len
         )
-        
+
         self.decoder = PGCTDecoder(
             vocab_size=vocab_size,
             embed_size=embed_size,
@@ -60,44 +53,33 @@ class PGCTModel(nn.Module):
             max_tgt_len=max_tgt_len
         )
 
-        self.encoder_proj = nn.Linear(hidden_size, hidden_size)
-    # 修正: 返回类型应为 4 个值 (outputs, None, None, coverage_loss)
+        self.encoder_proj = nn.Linear(hidden_size, hidden_size) if embed_size != hidden_size else nn.Identity()
+
     def forward(
         self,
         src: torch.Tensor,
         tgt: Optional[torch.Tensor] = None,
         src_lens: Optional[torch.Tensor] = None,
         src_oov_map: Optional[torch.Tensor] = None,
-        # max_oov_len: Optional[torch.Tensor] = None, # <--- 新增参数
         teacher_forcing_ratio: float = 1.0
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor], torch.Tensor]:
-        """
-        训练阶段前向传播。
-        返回 (outputs, None, None, coverage_loss) 以兼容 Seq2Seq 模型的常见返回签名。
-        """
-        # 编码器前向
         encoder_outputs, _ = self.encoder(src, src_lens)
-        # <---修正: 如果 encoder 输出维度不等于 decoder hidden_size，则通过线性映射
         if encoder_outputs.size(-1) != self.hidden_size:
             encoder_outputs = self.encoder_proj(encoder_outputs)
-        # 修正：通过 encoder 方法获取 src_mask
         src_mask = self.encoder.generate_src_mask(src)
-        
+
         if tgt is not None:
             use_teacher_forcing = torch.rand(1).item() < teacher_forcing_ratio
             outputs, coverage_loss = self.decoder(
                 tgt=tgt,
                 encoder_outputs=encoder_outputs,
                 src=src,
-                src_mask=src_mask, # 传入 src_mask
+                src_mask=src_mask,
                 src_oov_map=src_oov_map,
-                # max_oov_len=max_oov_len, # <--- 传递新增参数
                 teacher_forcing=use_teacher_forcing
             )
-            # 修正: 返回 4 个值，其中 2 个为 None 占位符
             return outputs, None, None, coverage_loss
         else:
-            # 推理阶段，用户需调用 generate() 或 beam_search()
             raise ValueError("tgt is None, use generate() or beam_search() for inference.")
 
     @torch.no_grad()
@@ -106,19 +88,16 @@ class PGCTModel(nn.Module):
         src: torch.Tensor,
         src_lens: Optional[torch.Tensor] = None,
         src_oov_map: Optional[torch.Tensor] = None,
-        # max_oov_len: Optional[torch.Tensor] = None, # <--- 新增参数
         max_length: int = 100,
         sos_idx: int = 2,
         eos_idx: int = 3,
         device: Optional[torch.device] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """调用PGCT专用的贪婪解码函数"""
         return pgct_greedy_decode(
             model=self,
             src=src,
             src_lens=src_lens,
             src_oov_map=src_oov_map,
-            # max_oov_len=max_oov_len, # <--- 传递新增参数
             max_length=max_length,
             sos_idx=sos_idx,
             eos_idx=eos_idx,
@@ -131,20 +110,17 @@ class PGCTModel(nn.Module):
         src: torch.Tensor,
         src_lens: Optional[torch.Tensor] = None,
         src_oov_map: Optional[torch.Tensor] = None,
-        # max_oov_len: Optional[torch.Tensor] = None, # <--- 新增参数
         beam_size: int = 5,
         max_length: int = 100,
         sos_idx: int = 2,
         eos_idx: int = 3,
         device: Optional[torch.device] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """调用PGCT专用的束搜索函数"""
         return pgct_beam_search_decode(
             model=self,
             src=src,
             src_lens=src_lens,
             src_oov_map=src_oov_map,
-            # max_oov_len=max_oov_len, # <--- 传递新增参数
             beam_size=beam_size,
             max_length=max_length,
             sos_idx=sos_idx,

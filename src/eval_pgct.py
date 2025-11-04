@@ -191,11 +191,11 @@ def main(args):
     # 关键修改4：修复模型加载（兼容无 config 的 checkpoint）
     print(f"正在加载模型: {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    
+
     # 构建模型配置（优先级：args > config > 默认值）
     model_cfg = {
-        'embed_size': args.embed_size or config.get('embed_size', 256),
-        'hidden_size': args.hidden_size or config.get('hidden_size', 256),
+        'embed_size': args.embed_size or config.get('embed_size', 512),
+        'hidden_size': args.hidden_size or config.get('hidden_size', 512),
         'num_encoder_layers': args.num_encoder_layers or config.get('num_encoder_layers', 3),
         'num_decoder_layers': args.num_decoder_layers or config.get('num_decoder_layers', 3),
         'nhead': args.nhead or config.get('nhead', 8),
@@ -277,8 +277,8 @@ if __name__ == "__main__":
     parser.add_argument('--show_examples', type=int, default=3, help='展示生成示例数量（默认：3）')
     parser.add_argument('--num_workers', type=int, default=0, help='数据加载线程数（默认：0）')
     # 模型参数（适配无 config 的 checkpoint）
-    parser.add_argument('--embed_size', type=int, help='嵌入层维度（默认：256）')
-    parser.add_argument('--hidden_size', type=int, help='模型隐藏层维度（默认：256）')
+    parser.add_argument('--embed_size', type=int, help='嵌入层维度（默认：512）')
+    parser.add_argument('--hidden_size', type=int, help='模型隐藏层维度（默认：512）')
     parser.add_argument('--num_encoder_layers', type=int, help='Transformer 编码器层数（默认：3）')
     parser.add_argument('--num_decoder_layers', type=int, help='Transformer 解码器层数（默认：3）')
     parser.add_argument('--nhead', type=int, help='注意力头数（默认：8）')

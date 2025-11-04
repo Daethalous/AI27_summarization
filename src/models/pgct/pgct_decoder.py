@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Optional, Tuple
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from .pointer_generator import PointerGenerator
 from .coverage import CoverageMechanism
@@ -15,8 +14,8 @@ class PGCTDecoder(nn.Module):
     def __init__(
         self,
         vocab_size: int,
-        embed_size: int = 256,
-        hidden_size: int = 256,
+        embed_size: int = 512,
+        hidden_size: int = 512,
         num_layers: int = 3,
         nhead: int = 8,
         dropout: float = 0.1,
@@ -26,45 +25,39 @@ class PGCTDecoder(nn.Module):
     ):
         super().__init__()
         self.vocab_size = vocab_size
-        self.hidden_size = hidden_size #new
-        self.d_model = hidden_size
+        self.hidden_size = hidden_size
         self.pad_idx = pad_idx
         self.cov_loss_weight = cov_loss_weight
         self.max_tgt_len = max_tgt_len
 
-        # Embedding
         self.embedding = nn.Embedding(vocab_size, embed_size, padding_idx=pad_idx)
-        self.embed_proj = nn.Linear(embed_size, hidden_size)
+        self.embed_proj = nn.Linear(embed_size, hidden_size) if embed_size != hidden_size else nn.Identity()
         self.dropout = nn.Dropout(dropout)
 
-        # Core modules
-        self.coverage = CoverageMechanism(hidden_size, coverage_loss_weight=cov_loss_weight) # 初始化时传入权重
+        self.coverage = CoverageMechanism(hidden_size, coverage_loss_weight=cov_loss_weight)
         self.pointer = PointerGenerator(hidden_size, embed_size, vocab_size)
 
-        # Transformer decoder
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=hidden_size,
             nhead=nhead,
             dim_feedforward=hidden_size * 4,
             dropout=dropout,
-            batch_first=True
+            batch_first=True  # 保持 batch_first=True
         )
         self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
         self.pos_encoding = PositionalEncoding(d_model=hidden_size, max_len=max_tgt_len, dropout=dropout)
 
-    # -------------------------------------------------------------------------
-    # Utility masks
-    # -------------------------------------------------------------------------
     def generate_tgt_mask(self, tgt: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """生成目标序列掩码（因果掩码 + <PAD>掩码）"""
-        tgt_len = tgt.size(1)
-        causal_mask = torch.triu(torch.ones(tgt_len, tgt_len, device=tgt.device), diagonal=1).bool()
-        pad_mask = (tgt == self.pad_idx)
-        return causal_mask, pad_mask
+        """
+        Returns:
+            tgt_mask: [T, T] float mask for causal attention (float('-inf') where masked)
+            tgt_key_padding_mask: [B, T] bool mask
+        """
+        B, T = tgt.size()
+        causal_mask = torch.triu(torch.full((T, T), float('-inf'), device=tgt.device), diagonal=1)
+        tgt_key_padding_mask = (tgt == self.pad_idx)
+        return causal_mask, tgt_key_padding_mask
 
-    # -------------------------------------------------------------------------
-    # Stepwise decoding (for inference / beam search)
-    # -------------------------------------------------------------------------
     def forward_step(
         self,
         tgt_step: torch.Tensor,
@@ -73,55 +66,53 @@ class PGCTDecoder(nn.Module):
         coverage_vector: torch.Tensor,
         src_ids: torch.Tensor,
         src_oov_map: Optional[torch.Tensor] = None,
-        # max_oov_len: Optional[torch.Tensor] = None # <--- 新增
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """单步解码（用于推理阶段）"""
-        tgt_embed = self.embedding(tgt_step)
+        """
+        PGCT single-step forward. 完全兼容 batch_first=True/False。
+        """
+        tgt_embed = self.embedding(tgt_step)           # [B, T, D]
         tgt_embed = self.embed_proj(tgt_embed)
         tgt_embed = self.pos_encoding(tgt_embed)
-        
-        # 显式生成并传入因果掩码和填充掩码，使 forward_step 对序列长度 L>=1 都健壮
-        tgt_mask, tgt_key_padding_mask = self.generate_tgt_mask(tgt_step)
-        
+
+        B, T, D = tgt_embed.size()
+
+        # 修复单步 T=1 时的 mask
+        tgt_mask = None
+        if T > 1:
+            causal_mask, _ = self.generate_tgt_mask(tgt_step)
+            tgt_mask = causal_mask
+
+        tgt_key_padding_mask = (tgt_step == self.pad_idx)
+
         dec_output = self.transformer_decoder(
-            tgt=tgt_embed,
-            memory=encoder_outputs,
-            tgt_mask=tgt_mask,
-            tgt_key_padding_mask=tgt_key_padding_mask,
-            # memory_key_padding_mask=src_mask
+            tgt=tgt_embed,                             # [B, T, D], batch_first=True
+            memory=encoder_outputs,                    # [B, S, D], batch_first=True
+            tgt_mask=tgt_mask,                         # [T, T] 或 None
+            tgt_key_padding_mask=tgt_key_padding_mask, # [B, T]
             memory_key_padding_mask=src_mask.bool() if src_mask is not None else None
         )
-        
-        # 推理阶段通常只关心最后一个时间步的输出
-        dec_output_t = dec_output[:, -1, :]
-        
-        # Coverage attention
+
+        dec_output_timestep = dec_output[:, -1, :]
         context, attn_weights, coverage_vector, cov_loss_t = self.coverage.compute_stepwise_attention(
-            decoder_output=dec_output_t,
+            decoder_output=dec_output_timestep,
             encoder_outputs=encoder_outputs,
             coverage_vector=coverage_vector,
             src_mask=src_mask
         )
-        
-        # Pointer mechanism
-        # 注意：这里我们只取最后一个时间步的嵌入作为输入
+
         raw_embedded_t = self.embedding(tgt_step[:, -1])
         final_dist, _, _ = self.pointer.compute_final_dist(
-            decoder_output=dec_output_t,
+            decoder_output=dec_output_timestep,
             context=context,
             embedded=raw_embedded_t,
             vocab_size=self.vocab_size,
             src_ids=src_ids,
             src_oov_map=src_oov_map,
             attn_weights=attn_weights,
-            # max_oov_len=max_oov_len # <--- 新增
         )
 
         return final_dist, attn_weights, coverage_vector, cov_loss_t
 
-    # -------------------------------------------------------------------------
-    # Parallelized training forward (保持不变)
-    # -------------------------------------------------------------------------
     def forward(
         self,
         tgt: torch.Tensor,
@@ -129,42 +120,35 @@ class PGCTDecoder(nn.Module):
         src: torch.Tensor,
         src_mask: torch.Tensor,
         src_oov_map: Optional[torch.Tensor] = None,
-        # max_oov_len: Optional[torch.Tensor] = None, # <--- 新增
-        teacher_forcing: bool = True # 保留参数签名，但忽略其值
+        teacher_forcing: bool = True
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """训练阶段前向传播（并行 coverage 实现）"""
-        batch_size, tgt_len = tgt.size()
-        
-        # 1. Standard Transformer Setup (Parallel)
+        """
+        PGCT forward for training. 完全兼容 batch_first=True/False。
+        """
         tgt_input = tgt[:, :-1]
-        tgt_len_in = tgt_input.size(1)
-        
         tgt_mask, tgt_key_padding_mask = self.generate_tgt_mask(tgt_input)
-        tgt_embed = self.embedding(tgt_input)
-        raw_embedded = tgt_embed # [B, T, E]
+
+        tgt_embed = self.embedding(tgt_input)           # [B, T, D]
+        raw_embedded = tgt_embed
         tgt_embed = self.embed_proj(tgt_embed)
         tgt_embed = self.pos_encoding(tgt_embed)
-        
-        # 2. Parallel Transformer Decode
+
         dec_output = self.transformer_decoder(
             tgt=tgt_embed,
             memory=encoder_outputs,
             tgt_mask=tgt_mask,
             tgt_key_padding_mask=tgt_key_padding_mask,
             memory_key_padding_mask=src_mask
-        ) # [B, T, H]
+        )
 
-        # 3. Parallel Coverage Calculation (一次性计算所有步骤的注意力、上下文和损失)
         context_all_steps, all_attn_weights, total_cov_loss = self.coverage.compute_parallel_training(
             decoder_outputs=dec_output,
             encoder_outputs=encoder_outputs,
             src_mask=src_mask
         )
-        
-        # 4. Pointer-Generator Output (迭代 T，但使用并行结果)
+
         all_dists = []
-        for t in range(tgt_len_in):
-            # context 和 attn_weights 使用并行计算得到的第 t 步结果
+        for t in range(tgt_input.size(1)):
             final_dist, _, _ = self.pointer.compute_final_dist(
                 decoder_output=dec_output[:, t, :],
                 context=context_all_steps[:, t, :],
@@ -173,11 +157,8 @@ class PGCTDecoder(nn.Module):
                 src_ids=src,
                 src_oov_map=src_oov_map,
                 attn_weights=all_attn_weights[:, t, :],
-                # max_oov_len=max_oov_len # <--- 新增
             )
             all_dists.append(final_dist)
 
         all_dists = torch.stack(all_dists, dim=1)
-        
-        # total_cov_loss 是已经加权和平均的标量损失 (返回时挤压维度)
         return all_dists, total_cov_loss.squeeze(0)
