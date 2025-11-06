@@ -117,17 +117,20 @@ def pgct_greedy_decode(
         src_mask = src_mask.squeeze(1)
     src_mask = src_mask.bool()
 
+    batch_size = src.size(0)
     src_len = encoder_outputs.size(1)
 
-    seq = [sos_idx]
-    coverage = torch.zeros(1, src_len, device=device)
-    attn_list = []
+    sequences = torch.full((batch_size, 1), sos_idx, dtype=torch.long, device=device)
+    coverage = torch.zeros(batch_size, src_len, device=device)
+    finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
+    attn_lists: List[List[torch.Tensor]] = [[] for _ in range(batch_size)]
 
     for _ in range(max_length):
-        decoder_input = torch.tensor([seq], dtype=torch.long, device=device)
+        prev_finished = finished.clone()
+
         # 修正接口调用：接收 4 个返回值，并忽略第 4 个 (cov_loss_t)
         final_dist, attn_weights, new_coverage, _ = model.decoder.forward_step(
-            tgt_step=decoder_input,
+            tgt_step=sequences,
             encoder_outputs=encoder_outputs,
             src_mask=src_mask,
             coverage_vector=coverage,
@@ -135,17 +138,41 @@ def pgct_greedy_decode(
             src_oov_map=src_oov_map,
         )
 
-        # 取最后一步输出分布
-        # NOTE: final_dist 应该是 [1, 1, extended_vocab_size]，需要正确索引
-        logits = final_dist.squeeze(0) 
-        next_token = torch.argmax(logits, dim=-1).item()
+        logits = final_dist  # [B, V_ext]
+        next_tokens = torch.argmax(logits, dim=-1)
 
-        seq.append(next_token)
-        coverage = new_coverage  # 使用 decoder 返回的更新版覆盖向量
-        attn_list.append(attn_weights.cpu())
+        # 保留已完成样本的覆盖向量，防止重复更新
+        coverage = torch.where(prev_finished.unsqueeze(1), coverage, new_coverage)
 
-        if next_token == eos_idx:
+        # 只追踪尚未完成样本的注意力
+        attn_weights_cpu = attn_weights.detach().cpu()
+        for b in range(batch_size):
+            if not prev_finished[b]:
+                attn_lists[b].append(attn_weights_cpu[b])
+
+        # 对已完成样本强制输出 EOS，避免继续生成
+        eos_tensor = torch.full_like(next_tokens, eos_idx)
+        next_tokens = torch.where(prev_finished, eos_tensor, next_tokens)
+
+        sequences = torch.cat([sequences, next_tokens.unsqueeze(1)], dim=1)
+
+        finished = prev_finished | (next_tokens == eos_idx)
+        if torch.all(finished):
             break
 
-    attn_tensor = torch.stack(attn_list, dim=0) if attn_list else torch.zeros(1, src_len)
-    return torch.tensor([seq], device=device), attn_tensor.unsqueeze(0)
+    # 如果尚未生成 EOS，则补充一次 EOS，确保后续处理安全
+    if sequences.size(1) == 1:  # 仅包含 SOS 的极端情况
+        sequences = torch.cat([sequences, torch.full((batch_size, 1), eos_idx, device=device, dtype=torch.long)], dim=1)
+
+    # 构建注意力张量并自动填充
+    max_attn_steps = max((len(lst) for lst in attn_lists), default=0)
+    if max_attn_steps == 0:
+        attn_tensor = torch.zeros(batch_size, 1, src_len)
+    else:
+        attn_tensor = torch.zeros(batch_size, max_attn_steps, src_len)
+        for b, attns in enumerate(attn_lists):
+            if attns:
+                stacked = torch.stack(attns, dim=0)
+                attn_tensor[b, :stacked.size(0)] = stacked
+
+    return sequences, attn_tensor

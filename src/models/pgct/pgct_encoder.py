@@ -41,11 +41,11 @@ class PGCTEncoder(nn.Module):
         self.pad_idx = pad_idx
         self.embed_size = embed_size
         self.hidden_size = hidden_size
-
+        
         self.embedding = nn.Embedding(vocab_size, embed_size, padding_idx=pad_idx)
         self.embed_proj = nn.Linear(embed_size, hidden_size) if embed_size != hidden_size else nn.Identity()
         self.pos_encoding = PositionalEncoding(d_model=hidden_size, max_len=max_src_len, dropout=dropout)
-
+        
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_size,
             nhead=nhead,
@@ -72,7 +72,7 @@ class PGCTEncoder(nn.Module):
         embed = self.embedding(src)
         embed = self.embed_proj(embed)
         embed = self.pos_encoding(embed)
-
+        
         src_mask = self.generate_src_mask(src, src_lens)
         encoder_outputs = self.transformer_encoder(embed, src_key_padding_mask=src_mask)
         return encoder_outputs, src_mask

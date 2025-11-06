@@ -29,7 +29,7 @@ class PGCTModel(nn.Module):
         self.pad_idx = pad_idx
         self.max_tgt_len = max_tgt_len
         self.hidden_size = hidden_size
-
+        
         self.encoder = PGCTEncoder(
             vocab_size=vocab_size,
             embed_size=embed_size,
@@ -40,7 +40,7 @@ class PGCTModel(nn.Module):
             pad_idx=pad_idx,
             max_src_len=max_src_len
         )
-
+        
         self.decoder = PGCTDecoder(
             vocab_size=vocab_size,
             embed_size=embed_size,
@@ -67,7 +67,7 @@ class PGCTModel(nn.Module):
         if encoder_outputs.size(-1) != self.hidden_size:
             encoder_outputs = self.encoder_proj(encoder_outputs)
         src_mask = self.encoder.generate_src_mask(src)
-
+        
         if tgt is not None:
             use_teacher_forcing = torch.rand(1).item() < teacher_forcing_ratio
             outputs, coverage_loss = self.decoder(
