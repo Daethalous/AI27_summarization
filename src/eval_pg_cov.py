@@ -23,7 +23,7 @@ from utils.vocab import Vocab
 from utils.metrics import compute_rouge, print_metrics  # 确保有 ROUGE 计算函数
 
 
-@torch.no_grad()  # 关闭梯度计算，加速评估
+@torch.no_grad()
 def generate_summaries(
     model: PGCoverageSeq2Seq,
     dataloader,
@@ -33,31 +33,36 @@ def generate_summaries(
     decode_strategy: str = 'greedy',
     beam_size: int = 5
 ) -> Tuple[List[List[str]], List[List[str]], List[List[str]]]:
-    """批量生成摘要（适配 PG-Coverage 模型，返回预测/参考/源文本的 token 列表）"""
-    model.eval()  # 推理模式
-    all_predictions = []  # 预测摘要的 token 列表（批量）
-    all_references = []   # 参考摘要的 token 列表（批量）
-    all_sources = []      # 源文本的 token 列表（批量）
+    """批量生成摘要（适配 PG-Coverage 模型，返回 (预测, 参考, 源文本) token 列表"""
+    model.eval()
+    all_predictions = []
+    all_references = []
+    all_sources = []
 
-    # 批量处理数据
     pbar = tqdm(dataloader, desc=f"生成摘要（策略：{decode_strategy}）")
     for batch in pbar:
-        # 提取 batch 数据（适配 dataloader 输出格式）
-        src = batch['src'].to(device)  # [batch_size, max_src_len]
-        tgt = batch['tgt'].to(device)  # [batch_size, max_tgt_len]
-        src_len = batch.get('src_lens', None)  # [batch_size]（实际源文本长度）
-        src_oov_map = batch.get('src_oov_map', None)  # [batch_size, max_src_len]（OOV 映射，可选）
+        src = batch['src'].to(device)
+        tgt = batch['tgt'].to(device)
+        src_len = batch.get('src_lens', None)
+        src_oov_map = batch.get('src_oov_map', None)
+        oov_lists = batch.get("oov_list", None)
+        src_tokens_list = batch.get("src_tokens", None)  # 若 dataloader 有存原始 token
+
+        if src_len is not None:
+            src_len = src_len.to(device)
+        if src_oov_map is not None:
+            src_oov_map = src_oov_map.to(device)
+
         batch_size = src.size(0)
 
-        # 逐个样本解码（适配 PG-Coverage 模型的单样本 Beam Search 限制）
         for i in range(batch_size):
-            # 单样本数据（batch_size=1）
-            src_i = src[i:i+1]  # [1, max_src_len]
+            src_i = src[i:i+1]
             src_len_i = src_len[i:i+1] if src_len is not None else None
             src_oov_map_i = src_oov_map[i:i+1] if src_oov_map is not None else None
-            tgt_i = tgt[i]  # [max_tgt_len]（参考摘要）
+            tgt_i = tgt[i]
+            oov_list_i = oov_lists[i] if oov_lists is not None else None
+            src_tokens_i = src_tokens_list[i] if src_tokens_list is not None else None
 
-            # 1. 解码（调用模型自带方法，自动处理覆盖向量）
             if decode_strategy == 'beam':
                 pred_ids, _ = model.beam_search(
                     src=src_i,
@@ -69,7 +74,7 @@ def generate_summaries(
                     eos_idx=vocab.eos_idx,
                     device=device
                 )
-                pred_ids = pred_ids[0].tolist()  # 取最佳序列
+                pred_ids = pred_ids[0].tolist()
             else:
                 pred_ids, _ = model.generate(
                     src=src_i,
@@ -80,8 +85,126 @@ def generate_summaries(
                     eos_idx=vocab.eos_idx,
                     device=device
                 )
-                pred_ids = pred_ids[0].tolist()  # 取单样本序列
+                pred_ids = pred_ids[0].tolist()
 
-            # 2. 转为 token 列表（跳过特殊符号）
-            pred_tokens = vocab.decode(pred_ids, skip_special=True)  # 预测摘要
-            ref_tokens = vocab.decode(tgt_i.cpu().tolist(), skip_s
+            # 预测摘要, 参考摘要，源文本转为token并跳过特殊符号
+            def decode_with_oov(ids, vocab, oov_list):
+                out = []
+                for pid in ids:
+                    if pid == vocab.eos_idx:
+                        break
+                    if pid in (vocab.pad_idx, vocab.sos_idx):
+                        continue
+                    if pid < len(vocab):
+                        out.append(vocab.idx2word.get(pid, Vocab.UNK_TOKEN))
+                    else:
+                        ext_idx = pid - len(vocab)
+                        if oov_list and 0 <= ext_idx < len(oov_list):
+                            out.append(oov_list[ext_idx])
+                        else:
+                            out.append(Vocab.UNK_TOKEN)
+                return out
+
+            pred_tokens = decode_with_oov(pred_ids, vocab, oov_list_i)
+            ref_tokens = decode_with_oov(tgt_i.cpu().tolist(), vocab, None)
+            if src_tokens_i is not None and isinstance(src_tokens_i, list):
+                src_tokens = src_tokens_i
+            else:
+                # 或根据索引还原
+                src_tokens = decode_with_oov(src_i.squeeze(0).cpu().tolist(), vocab, oov_list_i)
+
+            all_predictions.append(pred_tokens)
+            all_references.append(ref_tokens)
+            all_sources.append(src_tokens)
+
+    return all_predictions, all_references, all_sources
+
+
+def main():
+    parser = argparse.ArgumentParser(description="PG-Coverage 评估脚本 (支持 OOV/coverage)")
+    parser.add_argument('--config', type=str, help='YAML 配置路径（可选）')
+    parser.add_argument('--data_dir', type=str, default='./data/raw', help='原始数据目录')
+    parser.add_argument('--vocab_path', type=str, default='./data/processed/vocab.json', help='词表文件')
+    parser.add_argument('--processed_dir', type=str, default='./data/processed', help='处理后数据目录')
+    parser.add_argument('--split', type=str, default='val', help='评估数据划分 val/test')
+    parser.add_argument('--checkpoint', type=str, required=True, help='PG-Coverage 检查点路径')
+    parser.add_argument('--max_src_len', type=int, default=400)
+    parser.add_argument('--max_tgt_len', type=int, default=100)
+    parser.add_argument('--batch_size', type=int, default=4)
+    parser.add_argument('--decode_strategy', type=str, choices=['greedy', 'beam'], default='greedy')
+    parser.add_argument('--beam_size', type=int, default=5)
+    parser.add_argument('--save_path', type=str, default='./docs/pg_coverage_eval_results.json', help='评估预测输出文件')
+    args = parser.parse_args()
+
+    # YAML 配置合并
+    config = {}
+    if args.config:
+        with open(args.config, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+    for arg_k, arg_v in vars(args).items():
+        if arg_v is not None:
+            config[arg_k] = arg_v
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"设备: {device}")
+
+    # 词表及数据集准备
+    vocab = Vocab.load(config["vocab_path"])
+    print(f"词表大小: {len(vocab)}")
+
+    dataloader = get_dataloader(
+        processed_dir=config["processed_dir"],
+        batch_size=config["batch_size"],
+        split=config["split"],
+        shuffle=False,
+        num_workers=0
+    )
+    print(f"评估集样本数: {len(dataloader.dataset)}")
+
+    # 恢复模型
+    # 检查点应存有训练config
+    checkpoint = torch.load(config["checkpoint"], map_location=device)
+    train_conf = checkpoint.get("config", {})
+    model = PGCoverageSeq2Seq(
+        vocab_size=len(vocab),
+        embed_size=train_conf.get("embed_size", 256),
+        hidden_size=train_conf.get("hidden_size", 256),
+        num_layers=train_conf.get("num_layers", 1),
+        dropout=train_conf.get("dropout", 0.1),
+        pad_idx=vocab.pad_idx,
+        cov_loss_weight=train_conf.get("coverage_loss_weight", 1.0)
+    ).to(device)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.eval()
+    print("模型已加载 ✔️")
+
+    # 生成摘要
+    predictions, references, sources = generate_summaries(
+        model=model,
+        dataloader=dataloader,
+        vocab=vocab,
+        device=device,
+        max_tgt_len=config["max_tgt_len"],
+        decode_strategy=config["decode_strategy"],
+        beam_size=config.get("beam_size", 5),
+    )
+
+    # 保存输出样例
+    eval_output = {
+        "predictions": [" ".join(x) for x in predictions],
+        "references": [" ".join(y) for y in references],
+        "sources": [" ".join(z) for z in sources],
+    }
+    with open(config["save_path"], "w", encoding="utf-8") as f:
+        json.dump(eval_output, f, ensure_ascii=False, indent=2)
+    print(f"已保存预测结果到: {config['save_path']}")
+
+    # 计算 ROUGE (字符串版本)
+    preds_strs = eval_output["predictions"]
+    refs_strs = eval_output["references"]
+    rouge_scores = compute_rouge(preds_strs, refs_strs)
+    print_metrics(rouge_scores)
+
+
+if __name__ == "__main__":
+    main()
