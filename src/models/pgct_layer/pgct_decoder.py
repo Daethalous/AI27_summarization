@@ -1,4 +1,4 @@
-"""Transformer Decoder for PGCT, integrating Pointer-Generator and Coverage (parallelized training)."""
+"""Transformer Decoder for PGCT_layer, integrating Pointer-Generator and Coverage (parallelized training)."""
 from __future__ import annotations
 from typing import Optional, Tuple
 import torch
@@ -6,7 +6,7 @@ import torch.nn as nn
 
 from .pointer_generator import PointerGenerator
 from .coverage import CoverageMechanism
-from .pgct_encoder import PositionalEncoding
+from .pgct_layer_encoder import PositionalEncoding
 
 
 class PGCTDecoder(nn.Module):

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional, Tuple, List
 import torch
 import torch.nn as nn
-from .pgct_layer_encoder import PGCTEncoder
+from .pgct_layer_encoder import PGCT_layer_Encoder
 from .pgct_decoder import PGCTDecoder
 from .pgct_decoding import pgct_greedy_decode, pgct_beam_search_decode 
 
@@ -35,7 +35,7 @@ class LayerAttention(nn.Module):
         return fused, alpha
 
 
-class PGCTModel(nn.Module):
+class PGCT_layer_Model(nn.Module):
     def __init__(
         self,
         vocab_size: int,
@@ -58,7 +58,7 @@ class PGCTModel(nn.Module):
         self.hidden_size = hidden_size
         self.use_layer_attention = use_layer_attention
         
-        self.encoder = PGCTEncoder(
+        self.encoder = PGCT_layer_Encoder(
             vocab_size=vocab_size,
             embed_size=embed_size,
             hidden_size=hidden_size,

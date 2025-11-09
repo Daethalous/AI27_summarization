@@ -1,4 +1,3 @@
-"""Transformer Encoder and shared utility classes for PGCT."""
 from __future__ import annotations
 from typing import Optional, Tuple, List
 import torch
@@ -23,7 +22,7 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 
-class PGCTEncoder(nn.Module):
+class PGCT_layer_Encoder(nn.Module):
     """Transformer编码器（适配PG+Coverage机制）"""
     def __init__(
         self,

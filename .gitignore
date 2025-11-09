@@ -64,3 +64,4 @@ Thumbs.db
 .env
 .env.*
 *.env
+checkpoints_pgct_layer/

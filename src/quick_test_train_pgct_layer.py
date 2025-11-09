@@ -1,8 +1,8 @@
 """
-快速测试 Transformer+Pointer-Generator+Coverage (PGCT) 模型训练
+快速测试 Transformer+Pointer-Generator+Coverage+Innerlayer-Attention (PGCT_layer) 模型训练
 
 功能:
-    - 验证 PGCT 模型能否在少量样本上前向/反向传播
+    - 验证 PGCT_layer 模型能否在少量样本上前向/反向传播
     - 测试 Teacher Forcing 和覆盖机制
     - 测试推理/生成功能
 """
@@ -20,7 +20,7 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from datamodules.cnndm import prepare_datasets, get_dataloader
-from models.pgct.pgct_model import PGCTModel
+from models.pgct_layer.pgct_layer_model import PGCT_layer_Model
 from utils.vocab import Vocab
 
 
@@ -29,7 +29,7 @@ def setup_logger():
     return logging.getLogger(__name__)
 
 
-def quick_test_pgct(
+def quick_test_pgct_layer(
     data_dir: str = "../data/raw",
     num_samples: int = 100,
     batch_size: int = 2,
@@ -76,7 +76,7 @@ def quick_test_pgct(
     train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True, collate_fn=train_loader.collate_fn)
 
     # 模型
-    model = PGCTModel(
+    model = PGCT_layer_Model(
         vocab_size=len(vocab),
         embed_size=embed_size,
         hidden_size=hidden_size,
@@ -156,14 +156,14 @@ def quick_test_pgct(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Quick test for PGCT model training.")
+    parser = argparse.ArgumentParser(description="Quick test for PGCT_layer model training.")
     parser.add_argument("--data_dir", type=str, default="../data/raw", help="Directory for raw data.")
     parser.add_argument("--num_samples", type=int, default=100, help="Number of samples to use for quick test.")
     parser.add_argument("--num_epochs", type=int, default=1, help="Number of epochs to run.")
     
     args = parser.parse_args()
     
-    quick_test_pgct(
+    quick_test_pgct_layer(
         data_dir=args.data_dir,
         num_samples=args.num_samples,
         num_epochs=args.num_epochs
