@@ -1,46 +1,47 @@
 # 数据配置（适配 PGCT 模型的 OOV 处理）
 data:
-  max_vocab_size: 50000      # 最大词表大小（与 baseline 一致）
-  min_freq: 5                # 最小词频（过滤低频词，减少词表冗余）
-  max_src_len: 400           # 源文本最大长度（摘要任务通常400足够，避免过长）
-  max_tgt_len: 100           # 摘要最大长度（符合摘要短文本特性，避免512的冗余）
-  vocab_path: ../data/processed/vocab.json  # 词表路径（与预处理输出对齐）
-  data_dir: ../data/raw       # 原始数据目录
-  processed_dir: ../data/processed  # 预处理后数据目录
+  max_vocab_size: 50000
+  min_freq: 5
+  max_src_len: 400
+  max_tgt_len: 100
+  vocab_path: ../data/processed/vocab.json
+  data_dir: ../data/raw
+  processed_dir: ../data/processed
 
 # 模型配置（PGCT 核心参数：Transformer + Pointer-Generator + Coverage + layer_attention）
 model:
-  type: pgct_layer           # 模型类型标记（方便脚本识别）
-  embed_size: 512            # 词嵌入维度（与 Transformer 输入维度匹配）
-  hidden_size: 512           # Transformer 模型维度（编码器/解码器隐藏层维度）
-  num_encoder_layers: 3      # Transformer 编码器层数（平衡效果与速度）
-  num_decoder_layers: 3      # Transformer 解码器层数（与编码器对称）
-  nhead: 8                   # 注意力头数（hidden_size 需能被 nhead 整除：512/8=64）
-  dropout: 0.1               # Dropout 率（防止过拟合）
-  cov_loss_weight: 1.0       # 覆盖损失权重（控制减少重复生成的强度）
-  pad_idx: 0                 # PAD  token 索引（与 vocab.py 对齐）
-  sos_idx: 2                 # SOS token 索引（开始符，需与数据预处理一致）
-  eos_idx: 3                 # EOS token 索引（结束符，需与数据预处理一致）
+  type: pgct_layer
+  embed_size: 512
+  hidden_size: 512
+  num_encoder_layers: 2
+  num_decoder_layers: 2
+  nhead: 4
+  dropout: 0.1
+  cov_loss_weight: 1.0
+  pad_idx: 0
+  sos_idx: 2
+  eos_idx: 3
   use_layer_attention: true
 
-# 训练配置
+# 训练配置 (已适配 AdamW 和 Warmup + Cosine Annealing)
 train:
-  batch_size: 16             # 批次大小（PGCT 模型更大，比 baseline 减少以适配显存）
-  num_epochs: 10             # 训练轮数（足够模型收敛）
-  learning_rate: 1e-4        # 学习率（Transformer 常用优化参数）
-  grad_clip: 5.0             # 梯度裁剪阈值（防止梯度爆炸）
-  teacher_forcing_ratio: 0.5 # 教师强制比例（平衡模仿与自主生成）
-  save_dir: ../checkpoints_pgct_layer  # PGCT 模型保存目录（与 baseline 区分）
-  save_every: 2              # 每 2 轮保存一次 checkpoint
-  num_samples: null          # 训练样本数（null 表示使用全量数据，调试时可设 1000）
+  batch_size: 8
+  num_epochs: 10
+  learning_rate: 1e-4
+  weight_decay: 0.01
+  warmup_steps: 4000
+  grad_clip: 5.0
+  teacher_forcing_ratio: 0.5
+  save_every: 2
+  num_samples: null
 
 # 评估配置（支持 Greedy/Beam 两种解码策略）
 eval:
-  split: test                # 评估数据集（test/val/train）
-  batch_size: 32             # 评估批次大小（可大于训练，因无反向传播）
-  decode_strategy: greedy    # 默认解码策略（greedy/beam）
-  beam_size: 5               # 束搜索大小（仅 decode_strategy=beam 时生效）
-  show_examples: 3           # 展示生成示例数量（方便直观检查效果）
-  output_dir: ../outputs_pgct_layer # 评估结果输出目录（与 baseline 区分）
-  output_file: test_summaries.json # 生成摘要保存文件名
-  num_workers: 0             # 数据加载线程数（避免多线程显存冲突）
+  split: test
+  batch_size: 32
+  decode_strategy: greedy
+  beam_size: 5
+  show_examples: 3
+  output_dir: ../outputs_pgct_layer
+  output_file: test_summaries.json
+  num_workers: 0
